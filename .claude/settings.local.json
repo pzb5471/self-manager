@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -m pytest tests/unit/test_app_unittest.py -v)",
-      "Bash(python -m unittest tests.unit.test_app_unittest -v)"
-    ]
-  }
-}
