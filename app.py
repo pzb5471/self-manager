@@ -19,6 +19,55 @@ page = st.sidebar.radio("选择页面", ["任务列表", "添加任务"])
 if page == "任务列表":
     st.header("任务列表")
 
+    # ===== 任务统计功能 =====
+    st.subheader("📊 任务统计")
+
+    # 使用 st.columns() 创建三列布局
+    stat_col1, stat_col2, stat_col3 = st.columns(3)
+
+    # ===== 第一列：总任务数 =====
+    # 使用 len() 函数获取列表长度，统计任务总数
+    total_tasks = len(st.session_state.tasks)
+
+    with stat_col1:
+        st.metric("总任务数", total_tasks)
+
+    # ===== 第二列：按分类统计 =====
+    # 使用字典存储分类统计结果（Python内置数据类型 - 字典）
+    category_stats = {'工作': 0, '学习': 0, '生活': 0, '健康': 0}
+
+    # 使用 for 循环遍历任务列表，统计各分类数量
+    for task in st.session_state.tasks:  # 遍历列表（Python内置数据类型 - 列表）
+        category = task.get('category', '未分类')  # 使用 dict.get() 方法获取字典值
+        if category in category_stats:  # 使用 if 判断条件）
+            category_stats[category] += 1  # 字典值自增操作
+
+    with stat_col2:
+        st.write("**按分类统计**")
+        # 使用 for 循环遍历字典，显示统计结果
+        for category, count in category_stats.items():  # 使用 dict.items() 遍历字典键值对
+            if count > 0:  # 只显示数量大于0的分类
+                st.write(f"- {category}: {count} 个")
+
+    # ===== 第三列：按优先级统计 =====
+    # 使用字典存储优先级统计结果（字典初始化）
+    priority_stats = {'高': 0, '中': 0, '低': 0}
+
+    # 使用 for 循环遍历任务列表
+    for task in st.session_state.tasks:
+        priority = task.get('priority', '中')  # 获取优先级，默认为'中'
+        if priority in priority_stats:
+            priority_stats[priority] += 1
+
+    with stat_col3:
+        st.write("**按优先级统计**")
+        st.write(f"🔴 高: {priority_stats['高']} 个")
+        st.write(f"🟡 中: {priority_stats['中']} 个")
+        st.write(f"🟢 低: {priority_stats['低']} 个")
+
+    st.markdown("---")
+    # ===== 任务统计功能结束 =====
+
     # 筛选功能
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
@@ -30,15 +79,15 @@ if page == "任务列表":
         if st.button("刷新"):
             st.rerun()
 
-    # 筛选任务
+    # 筛选任务 - 使用列表推导式（Python高级特性 - 列表推导式）
     filtered_tasks = st.session_state.tasks
     if selected_category != "全部":
         filtered_tasks = [t for t in filtered_tasks if t.get('category', '未分类') == selected_category]
     if selected_priority != "全部":
         filtered_tasks = [t for t in filtered_tasks if t.get('priority', '中') == selected_priority]
 
-    # 显示任务统计
-    st.subheader(f"共 {len(filtered_tasks)} 个任务")
+    # 删除原来的简单统计显示
+    # st.subheader(f"共 {len(filtered_tasks)} 个任务")
 
     # 按优先级排序显示
     priority_order = {'高': 0, '中': 1, '低': 2}
@@ -121,34 +170,50 @@ elif page == "添加任务" or st.session_state.get('page') == "添加任务":
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.form_submit_button("保存", use_container_width=True):
-                if not title.strip():
-                    st.error("任务标题不能为空")
+                # ===== 任务标题验证功能 =====
+                # 使用 str.strip() 去除首尾空格（Python字符串方法）
+                title_trimmed = title.strip()
+                title_length = len(title_trimmed)  # 使用 len() 获取字符串长度
+
+                # ===== 使用 if/elif/else 条件判断进行验证 =====
+                if not title_trimmed:
+                    # 使用 st.error() 显示错误信息（Streamlit组件）
+                    st.error("❌ 错误：任务标题不能为空！")
+                elif title_length < 2:
+                    # 使用 st.warning() 显示警告信息（Streamlit组件）
+                    st.warning("⚠️ 警告：任务标题太短（至少2个字符）")
+                elif title_length > 50:
+                    st.warning("⚠️ 警告：任务标题过长（建议不超过50个字符）")
                 else:
+                    # 验证通过，保存任务
                     if edit_id:
-                        # 更新现有任务
-                        for task in st.session_state.tasks:
-                            if task['id'] == edit_id:
-                                task['title'] = title
+                        # 更新现有任务 - 使用 for 循环查找并更新任务
+                        for task in st.session_state.tasks:  # 遍历列表
+                            if task['id'] == edit_id:  # 条件判断
+                                task['title'] = title_trimmed
                                 task['category'] = category if category else '未分类'
                                 task['priority'] = priority
-                                break
-                        st.success("任务更新成功！")
+                                break  # 跳出循环
+                        st.success("✅ 任务更新成功！")
                     else:
-                        # 添加新任务
-                        new_task = {
+                        # 添加新任务 - 使用字典创建任务对象
+                        new_task = {  # Python字典字面量
                             'id': len(st.session_state.tasks) + 1,
-                            'title': title,
+                            'title': title_trimmed,
                             'category': category if category else '未分类',
                             'priority': priority,
                             'completed': False,
                             'created_at': datetime.now().strftime("%Y-%m-%d %H:%M")
                         }
+                        # 使用 list.append() 方法添加元素到列表
                         st.session_state.tasks.append(new_task)
-                        st.success("任务添加成功！")
+                        st.success("✅ 任务添加成功！")
 
+                    # 重置页面状态
                     st.session_state.page = "任务列表"
                     st.session_state.edit_id = None
                     st.rerun()
+                # ===== 任务标题验证功能结束 =====
 
         with col2:
             if st.form_submit_button("取消", use_container_width=True):
