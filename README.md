@@ -47,7 +47,7 @@
 1. 克隆项目并进入目录
 
 ```bash
-git clone <your-repo-url>
+git clone https://gitee.com/vibe-coding-2026-3/self-manager.git
 cd self-manager
 ```
 
