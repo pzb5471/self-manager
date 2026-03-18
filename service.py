@@ -1,317 +1,342 @@
-"""
-个人能效管理系统 - 业务逻辑层
+"""个人能效管理系统 - SQLite 业务逻辑层。
 
-本模块包含任务管理的核心业务逻辑函数，
-从 Streamlit UI 层分离出来，便于单元测试。
+本模块将任务数据统一持久化到 SQLite，
+用于替代原先的内存态 session_state 数据管理。
 """
 
-from datetime import datetime
-from typing import List, Dict, Optional
+import sqlite3
+from pathlib import Path
+from typing import Dict, List, Optional
 
 
 class TaskService:
-    """任务服务类，封装任务管理的所有业务逻辑"""
+    """任务服务类：封装 SQLite 的建库、增删改查与统计能力。"""
 
-    def __init__(self):
-        """初始化任务服务"""
-        self.tasks: List[Dict] = []
-        self.next_id: int = 1
+    # 默认分类（初始化时即提供给界面与业务层使用）
+    DEFAULT_CATEGORIES = ["工作", "学习", "生活", "健康"]
 
-    def add_task(self, title: str, category: str = "未分类",
-                 priority: str = "中") -> Dict:
-        """
-        添加新任务
+    def __init__(self, db_path: str = "productivity_manager.db"):
+        """初始化任务服务并确保数据库结构就绪。"""
+        self.db_path = str(Path(db_path))
+        self._init_db()
 
-        参数:
-            title: 任务标题
-            category: 任务分类（默认"未分类"）
-            priority: 任务优先级（默认"中"）
+    def _get_connection(self) -> sqlite3.Connection:
+        """创建数据库连接并启用按列名访问。"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
-        返回:
-            新创建的任务字典
+    def _init_db(self) -> None:
+        """初始化数据库：创建任务表与索引。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
-        异常:
-            ValueError: 当标题无效时抛出
-        """
-        # 验证任务标题
+        # 任务主表：严格按迁移要求定义字段
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT,
+                category TEXT NOT NULL,
+                quadrant INTEGER NOT NULL CHECK(quadrant BETWEEN 1 AND 4),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # 常用查询字段索引：分类、象限、创建时间
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_category ON tasks(category)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_quadrant ON tasks(quadrant)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC)")
+
+        # 显式提交，确保建表与建索引立即持久化
+        conn.commit()
+        conn.close()
+
+    def add_task(
+        self,
+        title: str,
+        description: Optional[str] = "",
+        category: str = "工作",
+        quadrant: int = 1,
+    ) -> Dict:
+        """新增任务并返回完整任务对象。"""
         title_trimmed = self._validate_title(title)
+        category_checked = self._validate_category(category)
+        quadrant_checked = self._validate_quadrant(quadrant)
 
-        # 创建新任务
-        new_task = {
-            'id': self.next_id,
-            'title': title_trimmed,
-            'category': category if category else '未分类',
-            'priority': priority,
-            'completed': False,
-            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M")
-        }
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
-        # 自增ID
-        self.next_id += 1
+        # 使用 ? 占位符防止 SQL 注入
+        cursor.execute(
+            """
+            INSERT INTO tasks (title, description, category, quadrant)
+            VALUES (?, ?, ?, ?)
+            """,
+            (title_trimmed, (description or "").strip(), category_checked, quadrant_checked),
+        )
 
-        # 添加到任务列表
-        self.tasks.append(new_task)
+        # 显式提交，保证写入落盘
+        conn.commit()
+        task_id = cursor.lastrowid
+        conn.close()
 
-        return new_task
+        task = self.get_task_by_id(task_id)
+        if task is None:
+            raise RuntimeError("任务写入后读取失败")
+        return task
 
-    def update_task(self, task_id: int, title: Optional[str] = None,
-                    category: Optional[str] = None,
-                    priority: Optional[str] = None) -> bool:
-        """
-        更新现有任务
-
-        参数:
-            task_id: 任务ID
-            title: 新标题（可选）
-            category: 新分类（可选）
-            priority: 新优先级（可选）
-
-        返回:
-            bool: 更新成功返回True，任务不存在返回False
-
-        异常:
-            ValueError: 当标题无效时抛出
-        """
-        task = self._find_task_by_id(task_id)
-        if not task:
+    def update_task(
+        self,
+        task_id: int,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        category: Optional[str] = None,
+        quadrant: Optional[int] = None,
+    ) -> bool:
+        """更新任务字段，成功返回 True，不存在返回 False。"""
+        if self.get_task_by_id(task_id) is None:
             return False
 
-        # 更新标题（如果提供了新标题）
+        updates: List[str] = []
+        params: List = []
+
         if title is not None:
-            task['title'] = self._validate_title(title)
-
-        # 更新分类（如果提供了新分类）
+            updates.append("title = ?")
+            params.append(self._validate_title(title))
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description.strip())
         if category is not None:
-            task['category'] = category if category else '未分类'
+            updates.append("category = ?")
+            params.append(self._validate_category(category))
+        if quadrant is not None:
+            updates.append("quadrant = ?")
+            params.append(self._validate_quadrant(quadrant))
 
-        # 更新优先级（如果提供了新优先级）
-        if priority is not None:
-            task['priority'] = priority
+        # 无业务字段更新时，仍更新 updated_at，保证时间语义一致
+        updates.append("updated_at = CURRENT_TIMESTAMP")
 
-        return True
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        sql = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
+        params.append(task_id)
+        cursor.execute(sql, params)
+
+        # 显式提交，保证更新落盘
+        conn.commit()
+        updated = cursor.rowcount > 0
+        conn.close()
+        return updated
 
     def delete_task(self, task_id: int) -> bool:
-        """
-        删除任务
+        """删除任务，成功返回 True，不存在返回 False。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
-        参数:
-            task_id: 要删除的任务ID
-
-        返回:
-            bool: 删除成功返回True，任务不存在返回False
-        """
-        original_count = len(self.tasks)
-        self.tasks = [t for t in self.tasks if t['id'] != task_id]
-        return len(self.tasks) < original_count
-
-    def toggle_task_completion(self, task_id: int, completed: Optional[bool] = None) -> bool:
-        """
-        切换任务完成状态
-
-        参数:
-            task_id: 任务ID
-            completed: 完成状态，None表示切换当前状态
-
-        返回:
-            bool: 操作成功返回True，任务不存在返回False
-        """
-        task = self._find_task_by_id(task_id)
-        if not task:
-            return False
-
-        if completed is None:
-            # 切换状态
-            task['completed'] = not task['completed']
-        else:
-            # 设置指定状态
-            task['completed'] = completed
-
-        return True
-
-    def _find_task_by_id(self, task_id: int) -> Optional[Dict]:
-        """
-        根据ID查找任务
-
-        参数:
-            task_id: 任务ID
-
-        返回:
-            任务字典，不存在则返回None
-        """
-        for task in self.tasks:
-            if task['id'] == task_id:
-                return task
-        return None
+        # 显式提交，保证删除落盘
+        conn.commit()
+        deleted = cursor.rowcount > 0
+        conn.close()
+        return deleted
 
     def get_task_by_id(self, task_id: int) -> Optional[Dict]:
-        """
-        根据ID获取任务（公共方法）
-
-        参数:
-            task_id: 任务ID
-
-        返回:
-            任务字典，不存在则返回None
-        """
-        return self._find_task_by_id(task_id)
+        """根据任务 ID 获取任务详情。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, title, description, category, quadrant, created_at, updated_at
+            FROM tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return self._row_to_task(row) if row else None
 
     def get_all_tasks(self) -> List[Dict]:
-        """
-        获取所有任务
+        """获取全部任务，按创建时间倒序显示。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, title, description, category, quadrant, created_at, updated_at
+            FROM tasks
+            ORDER BY created_at DESC, id DESC
+            """
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [self._row_to_task(row) for row in rows]
 
-        返回:
-            任务列表（深拷贝，修改不影响原列表）
-        """
-        # 使用 deepcopy 确保返回的是完全独立的副本
-        import copy
-        return copy.deepcopy(self.tasks)
+    def filter_tasks(
+        self,
+        category: Optional[str] = None,
+        quadrant: Optional[int] = None,
+    ) -> List[Dict]:
+        """按分类与象限筛选任务。"""
+        conditions: List[str] = []
+        params: List = []
 
-    def filter_tasks(self, category: Optional[str] = None,
-                     priority: Optional[str] = None) -> List[Dict]:
-        """
-        筛选任务
-
-        参数:
-            category: 分类筛选，None表示不筛选
-            priority: 优先级筛选，None表示不筛选
-
-        返回:
-            筛选后的任务列表
-        """
-        filtered = self.tasks
-
-        # 按分类筛选
         if category and category != "全部":
-            filtered = [t for t in filtered
-                       if t.get('category', '未分类') == category]
+            conditions.append("category = ?")
+            params.append(self._validate_category(category))
 
-        # 按优先级筛选
-        if priority and priority != "全部":
-            filtered = [t for t in filtered
-                       if t.get('priority', '中') == priority]
+        if quadrant and str(quadrant) != "全部":
+            conditions.append("quadrant = ?")
+            params.append(self._validate_quadrant(int(quadrant)))
 
-        return filtered
+        where_sql = ""
+        if conditions:
+            where_sql = "WHERE " + " AND ".join(conditions)
 
-    def sort_tasks_by_priority(self, tasks: Optional[List[Dict]] = None) -> List[Dict]:
-        """
-        按优先级排序任务
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT id, title, description, category, quadrant, created_at, updated_at
+            FROM tasks
+            {where_sql}
+            ORDER BY created_at DESC, id DESC
+            """,
+            params,
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [self._row_to_task(row) for row in rows]
 
-        优先级顺序：高 > 中 > 低
+    def get_statistics(self) -> Dict:
+        """获取统计信息：总数、分类统计、象限统计。"""
+        all_tasks = self.get_all_tasks()
 
-        参数:
-            tasks: 要排序的任务列表，None表示排序所有任务
+        category_stats = {category: 0 for category in self.DEFAULT_CATEGORIES}
+        quadrant_stats = {1: 0, 2: 0, 3: 0, 4: 0}
 
-        返回:
-            排序后的任务列表（新列表，不修改原列表）
-        """
-        if tasks is None:
-            tasks = self.tasks
+        for task in all_tasks:
+            category_stats[task["category"]] += 1
+            quadrant_stats[task["quadrant"]] += 1
 
-        priority_order = {'高': 0, '中': 1, '低': 2}
-        # 创建副本并排序
-        return sorted(tasks.copy(),
-                     key=lambda x: priority_order.get(x.get('priority', '中'), 1))
-
-    def get_statistics(self) -> Dict[str, int]:
-        """
-        获取任务统计信息
-
-        返回:
-            包含统计数据的字典：
-            - total: 总任务数
-            - completed: 已完成任务数
-            - pending: 未完成任务数
-            - work: 工作任务数
-            - study: 学习任务数
-            - life: 生活任务数
-            - health: 健康任务数
-            - high_priority: 高优先级任务数
-            - medium_priority: 中优先级任务数
-            - low_priority: 低优先级任务数
-        """
-        stats = {
-            'total': len(self.tasks),
-            'completed': 0,
-            'pending': 0,
-            'work': 0,
-            'study': 0,
-            'life': 0,
-            'health': 0,
-            'high_priority': 0,
-            'medium_priority': 0,
-            'low_priority': 0
+        return {
+            "total": len(all_tasks),
+            "by_category": category_stats,
+            "by_quadrant": quadrant_stats,
         }
-
-        # 分类统计映射
-        category_map = {
-            '工作': 'work',
-            '学习': 'study',
-            '生活': 'life',
-            '健康': 'health'
-        }
-
-        # 优先级统计映射
-        priority_map = {
-            '高': 'high_priority',
-            '中': 'medium_priority',
-            '低': 'low_priority'
-        }
-
-        for task in self.tasks:
-            # 统计完成状态
-            if task.get('completed', False):
-                stats['completed'] += 1
-            else:
-                stats['pending'] += 1
-
-            # 统计分类
-            category = task.get('category', '未分类')
-            if category in category_map:
-                stats[category_map[category]] += 1
-
-            # 统计优先级
-            priority = task.get('priority', '中')
-            if priority in priority_map:
-                stats[priority_map[priority]] += 1
-
-        return stats
 
     def get_categories(self) -> List[str]:
-        """
-        获取所有任务分类
+        """返回默认分类列表（初始化时提供：工作/学习/生活/健康）。"""
+        return self.DEFAULT_CATEGORIES.copy()
 
-        返回:
-            分类列表
+    def get_tasks_grouped_by_quadrant(self) -> Dict[int, List[Dict]]:
+        """返回按象限分组的任务字典。"""
+        grouped = {1: [], 2: [], 3: [], 4: []}
+        for task in self.get_all_tasks():
+            grouped[task["quadrant"]].append(task)
+        return grouped
+
+    def get_tasks_grouped_by_category(self) -> Dict[str, List[Dict]]:
+        """返回按分类分组的任务字典。"""
+        grouped = {category: [] for category in self.DEFAULT_CATEGORIES}
+        for task in self.get_all_tasks():
+            grouped[task["category"]].append(task)
+        return grouped
+
+    def search_tasks(self, keyword: str) -> List[Dict]:
+        """按标题或描述模糊搜索任务，使用 LIKE 和占位符防注入。"""
+        if not keyword or not keyword.strip():
+            return self.get_all_tasks()
+
+        search_term = f"%{keyword.strip()}%"
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, title, description, category, quadrant, created_at, updated_at
+            FROM tasks
+            WHERE title LIKE ? OR description LIKE ?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (search_term, search_term),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [self._row_to_task(row) for row in rows]
+
+    def get_sorted_tasks(self, sort_by: str = "created_desc") -> List[Dict]:
+        """按指定字段排序任务。
+        
+        sort_by 可选值:
+        - created_desc: 按创建时间倒序（最新在前）
+        - created_asc: 按创建时间正序（最旧在前）
+        - updated_desc: 按更新时间倒序（最新更新在前）
+        - updated_asc: 按更新时间正序（最旧更新在前）
         """
-        categories = set()
-        for task in self.tasks:
-            category = task.get('category', '未分类')
-            categories.add(category)
-        return sorted(list(categories))
+        # 映射排序字段与 SQL 语句
+        sort_mapping = {
+            "created_desc": "created_at DESC, id DESC",
+            "created_asc": "created_at ASC, id ASC",
+            "updated_desc": "updated_at DESC, id DESC",
+            "updated_asc": "updated_at ASC, id ASC",
+        }
+
+        order_clause = sort_mapping.get(sort_by, sort_mapping["created_desc"])
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT id, title, description, category, quadrant, created_at, updated_at
+            FROM tasks
+            ORDER BY {order_clause}
+            """
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [self._row_to_task(row) for row in rows]
+
+    def clear_all_tasks(self) -> None:
+        """清空全部任务（测试场景使用）。"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks")
+        conn.commit()
+        conn.close()
 
     def _validate_title(self, title: str) -> str:
-        """
-        验证任务标题
-
-        参数:
-            title: 原始标题
-
-        返回:
-            去除首尾空格后的标题
-
-        异常:
-            ValueError: 标题为空或太短时抛出
-        """
+        """校验任务标题：不能为空、至少 2 个字符。"""
         title_trimmed = title.strip()
-
         if not title_trimmed:
             raise ValueError("任务标题不能为空！")
         if len(title_trimmed) < 2:
             raise ValueError("任务标题太短（至少2个字符）")
-
         return title_trimmed
 
-    def clear_all_tasks(self) -> None:
-        """清空所有任务"""
-        self.tasks.clear()
-        self.next_id = 1
+    def _validate_category(self, category: str) -> str:
+        """校验分类必须属于默认分类集合。"""
+        if category not in self.DEFAULT_CATEGORIES:
+            raise ValueError("分类必须是 工作/学习/生活/健康 之一")
+        return category
+
+    def _validate_quadrant(self, quadrant: int) -> int:
+        """校验象限值必须在 1-4。"""
+        if quadrant not in (1, 2, 3, 4):
+            raise ValueError("象限必须是 1-4 的整数")
+        return quadrant
+
+    @staticmethod
+    def _row_to_task(row: sqlite3.Row) -> Dict:
+        """将 sqlite3.Row 转换为标准任务字典。"""
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "description": row["description"] or "",
+            "category": row["category"],
+            "quadrant": row["quadrant"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }

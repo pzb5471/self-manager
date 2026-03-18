@@ -1,132 +1,101 @@
-# 个人能效管理项目
+﻿# 个人效能管理系统（Self Manager）
 
-基于 Streamlit 的轻量级待办管理应用，适合个人日常任务记录与优先级管理。
+基于 `Streamlit + SQLite` 的任务管理应用，支持四象限管理法、搜索、排序、筛选，以及基础统计分析。
 
-## 项目亮点
+## 功能概览
 
-- 界面简洁：通过侧边栏在任务查看与任务录入之间快速切换
-- 业务清晰：UI 层与业务逻辑层拆分，便于维护与测试
-- 反馈明确：输入校验、操作成功提示、统计信息展示完整
-- 易于扩展：任务对象字段统一，后续接入持久化成本低
-
-## 功能
-
-- 页面结构
-	- 侧边栏提供两个页面：`任务列表`、`添加任务`
-- 任务管理
-	- 新增任务
-	- 编辑任务
-	- 删除任务
-	- 通过复选框标记完成状态
-- 分类与优先级
-	- 分类支持自定义，未填写时默认为 `未分类`
-	- 优先级支持 `高`、`中`、`低`，并按优先级排序展示
-- 筛选与刷新
-	- 支持按分类筛选
-	- 支持按优先级筛选
-	- 提供手动刷新按钮
-- 任务统计
-	- 总任务数
-	- 按分类统计（工作/学习/生活/健康）
-	- 按优先级统计（高/中/低）
-- 表单校验
-	- 任务标题不能为空
-	- 标题长度至少 2 个字符
-	- 标题过长（超过 50 个字符）会给出警告
-- 其他信息
-	- 任务会记录创建时间（格式：`YYYY-MM-DD HH:MM`）
+- 任务 CRUD：新增、编辑、删除、查看
+- SQLite 持久化：任务数据落库，刷新页面不丢失
+- 四象限管理：按 `quadrant=1~4` 管理任务优先级
+- 分类管理：内置分类 `工作 / 学习 / 生活 / 健康`
+- 搜索：按标题和描述模糊匹配
+- 排序：支持创建时间/更新时间的升序与降序
+- 筛选：按分类、象限组合筛选
+- 统计：总任务数、按分类统计、按象限统计
 
 ## 技术栈
 
 - Python 3.11+
 - Streamlit
-- unittest（单元测试）
-
-## 快速开始
-
-1. 克隆项目并进入目录
-
-```bash
-git clone https://gitee.com/vibe-coding-2026-3/self-manager.git
-cd self-manager
-```
-
-## 运行方式
-
-2. 安装依赖
-
-```bash
-pip install -r requirements.txt
-```
-
-3. 启动应用
-
-```bash
-streamlit run app.py
-```
-
-应用启动后，浏览器会自动打开本地页面（通常为 `http://localhost:8501`）。
-
-## 测试
-
-项目已补充业务逻辑层单元测试，可通过以下命令执行：
-
-```bash
-python -m unittest tests.unit.test_app_unittest -v
-```
+- SQLite3
+- unittest
 
 ## 项目结构
 
 ```text
 self-manager/
-├─ app.py                         # Streamlit 页面入口（交互/UI）
-├─ service.py                     # 任务管理业务逻辑（TaskService）
-├─ requirements.txt               # Python 依赖
-├─ tests/
-│  └─ unit/
-│     └─ test_app_unittest.py     # 核心单元测试
-└─ README.md
+├─ app.py                          # Streamlit 页面入口
+├─ service.py                      # 业务层与 SQLite 访问
+├─ requirements.txt                # 依赖
+├─ productivity_manager.db         # 默认数据库文件（运行后生成）
+└─ tests/
+   └─ unit/
+      └─ test_app_unittest.py      # 单元测试
 ```
 
-## 核心实现说明
+## 数据库设计
 
-- 任务对象字段
-	- `id`：任务唯一编号
-	- `title`：任务标题（写入前会去除首尾空格）
-	- `category`：任务分类（空值回退为 `未分类`）
-	- `priority`：任务优先级（高/中/低）
-	- `completed`：完成状态
-	- `created_at`：创建时间
-- 排序规则
-	- 使用固定映射实现优先级排序：高 > 中 > 低
-- 统计维度
-	- 总任务、完成/未完成、分类分布、优先级分布
-- 输入校验
-	- 标题为空时报错
-	- 少于 2 个字符时报错
-	- 超过 50 个字符时给出警告
+### 表：`tasks`
 
-## 数据存储说明
+- `id`：INTEGER PRIMARY KEY AUTOINCREMENT
+- `title`：TEXT NOT NULL
+- `description`：TEXT
+- `category`：TEXT NOT NULL
+- `quadrant`：INTEGER NOT NULL，限制为 `1~4`
+- `created_at`：TIMESTAMP，默认 `CURRENT_TIMESTAMP`
+- `updated_at`：TIMESTAMP，默认 `CURRENT_TIMESTAMP`
 
-任务数据保存在 Streamlit 的 `session_state` 中，属于内存态数据。
+### 索引
 
-- 刷新浏览器页面后会丢失
-- 重启应用后会丢失
-- 不会写入本地数据库或文件
+- `idx_tasks_category`
+- `idx_tasks_quadrant`
+- `idx_tasks_created_at`
+
+## 快速开始
+
+1. 安装依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+2. 启动应用
+
+```bash
+streamlit run app.py
+```
+
+启动后访问：`http://localhost:8501`
+
+## 运行测试
+
+推荐在你当前 `py311` 环境执行：
+
+```bash
+python -m unittest discover -s tests/unit -p "test_*.py" -v
+```
+
+当前测试覆盖：
+
+- 数据库初始化（建表、索引）
+- 任务增删改查
+- 输入校验与异常分支
+- 搜索与 SQL 注入防护
+- 排序逻辑
+- 分组统计与清空数据
+
+## 核心业务规则
+
+- 标题不能为空，且至少 2 个字符
+- 分类必须属于：`工作 / 学习 / 生活 / 健康`
+- 象限必须为 `1~4`
+- 所有 SQL 使用参数化查询，避免注入
 
 ## 已知限制
 
-- 当前版本不支持多用户隔离
-- 当前版本不支持任务持久化（数据库/文件）
-- 当前版本不支持截止日期、提醒通知和标签系统
+- 当前为单用户本地应用
+- 搜索基于 SQLite `LIKE`，不支持复杂全文检索
 
-## 后续规划
+## License
 
-- 接入 SQLite 持久化存储
-- 增加截止日期与逾期提醒
-- 增加搜索、标签与批量操作
-- 增加导出能力（CSV/JSON）
-
-## 许可
-
-本项目遵循仓库中的 LICENSE 约定。
+遵循仓库中的 `LICENSE`。

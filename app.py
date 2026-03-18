@@ -1,232 +1,276 @@
 import streamlit as st
-from datetime import datetime
 
-# 初始化内存数据
-if 'tasks' not in st.session_state:
-    st.session_state.tasks = []
+from service import TaskService
 
-if 'show_form' not in st.session_state:
-    st.session_state.show_form = False
 
-# 设置页面配置
+# 设置页面配置（保持原有导航形态）
 st.set_page_config(page_title="个人能效管理", page_icon="📋")
 
-# 侧边栏
-st.sidebar.title("📋 个人能效管理")
-page = st.sidebar.radio("选择页面", ["任务列表", "添加任务"])
 
-# 任务列表页面
+@st.cache_resource
+def get_task_service() -> TaskService:
+    """缓存服务实例，避免每次重跑重复初始化连接配置。"""
+    return TaskService(db_path="productivity_manager.db")
+
+
+def quadrant_label(quadrant: int) -> str:
+    """象限展示文案。"""
+    labels = {
+        1: "第一象限（重要且紧急）",
+        2: "第二象限（重要不紧急）",
+        3: "第三象限（紧急不重要）",
+        4: "第四象限（不紧急不重要）",
+    }
+    return labels.get(quadrant, f"第{quadrant}象限")
+
+
+def render_task_item(task: dict) -> None:
+    """统一渲染任务条目，保持编辑/删除交互体验。"""
+    task_id = task["id"]
+    with st.container():
+        col1, col2, col3 = st.columns([4, 2, 1])
+        with col1:
+            st.markdown(f"**{task['title']}**")
+            if task["description"]:
+                st.caption(task["description"])
+        with col2:
+            st.markdown(f"{task['category']} | {quadrant_label(task['quadrant'])}")
+            st.caption(f"创建: {task['created_at']}")
+            st.caption(f"更新: {task['updated_at']}")
+        with col3:
+            if st.button("编辑", key=f"edit_{task_id}"):
+                st.session_state.edit_id = task_id
+                st.session_state.page = "添加任务"
+                st.rerun()
+            if st.button("删除", key=f"del_{task_id}"):
+                service = get_task_service()
+                service.delete_task(task_id)
+                st.success("✅ 任务删除成功！")
+                st.rerun()
+        st.markdown("---")
+
+
+# 初始化仅用于 UI 状态，不再存储业务数据
+if "page" not in st.session_state:
+    st.session_state.page = "任务列表"
+if "edit_id" not in st.session_state:
+    st.session_state.edit_id = None
+
+service = get_task_service()
+
+# 侧边栏（布局与原有结构保持一致）
+st.sidebar.title("📋 个人能效管理")
+sidebar_page = st.sidebar.radio("选择页面", ["任务列表", "添加任务"])
+
+# 以 session_state.page 作为“按钮跳转”后的主路由，兼容原有交互习惯
+page = st.session_state.page if st.session_state.page != "任务列表" else sidebar_page
+
+
 if page == "任务列表":
     st.header("任务列表")
 
-    # ===== 任务统计功能 =====
+    # 统计区域
     st.subheader("📊 任务统计")
-
-    # 使用 st.columns() 创建三列布局
+    stats = service.get_statistics()
     stat_col1, stat_col2, stat_col3 = st.columns(3)
 
-    # ===== 第一列：总任务数 =====
-    # 使用 len() 函数获取列表长度，统计任务总数
-    total_tasks = len(st.session_state.tasks)
-
     with stat_col1:
-        st.metric("总任务数", total_tasks)
-
-    # ===== 第二列：按分类统计 =====
-    # 使用字典存储分类统计结果（Python内置数据类型 - 字典）
-    category_stats = {'工作': 0, '学习': 0, '生活': 0, '健康': 0}
-
-    # 使用 for 循环遍历任务列表，统计各分类数量
-    for task in st.session_state.tasks:  # 遍历列表（Python内置数据类型 - 列表）
-        category = task.get('category', '未分类')  # 使用 dict.get() 方法获取字典值
-        if category in category_stats:  # 使用 if 判断条件）
-            category_stats[category] += 1  # 字典值自增操作
+        st.metric("总任务数", stats["total"])
 
     with stat_col2:
         st.write("**按分类统计**")
-        # 使用 for 循环遍历字典，显示统计结果
-        for category, count in category_stats.items():  # 使用 dict.items() 遍历字典键值对
-            if count > 0:  # 只显示数量大于0的分类
-                st.write(f"- {category}: {count} 个")
-
-    # ===== 第三列：按优先级统计 =====
-    # 使用字典存储优先级统计结果（字典初始化）
-    priority_stats = {'高': 0, '中': 0, '低': 0}
-
-    # 使用 for 循环遍历任务列表
-    for task in st.session_state.tasks:
-        priority = task.get('priority', '中')  # 获取优先级，默认为'中'
-        if priority in priority_stats:
-            priority_stats[priority] += 1
+        for category, count in stats["by_category"].items():
+            st.write(f"- {category}: {count} 个")
 
     with stat_col3:
-        st.write("**按优先级统计**")
-        st.write(f"🔴 高: {priority_stats['高']} 个")
-        st.write(f"🟡 中: {priority_stats['中']} 个")
-        st.write(f"🟢 低: {priority_stats['低']} 个")
+        st.write("**按象限统计**")
+        for quadrant, count in stats["by_quadrant"].items():
+            st.write(f"- Q{quadrant}: {count} 个")
 
     st.markdown("---")
-    # ===== 任务统计功能结束 =====
 
-    # 筛选功能
+    # 搜索区域
+    st.subheader("🔍 搜索与排序")
+    search_col, sort_col = st.columns([2, 2])
+    with search_col:
+        search_keyword = st.text_input("搜索任务（按标题或描述）", placeholder="输入关键词...")
+    with sort_col:
+        sort_option = st.selectbox(
+            "排序方式",
+            [
+                ("最新创建优先", "created_desc"),
+                ("最旧创建优先", "created_asc"),
+                ("最新更新优先", "updated_desc"),
+                ("最旧更新优先", "updated_asc"),
+            ],
+            format_func=lambda x: x[0],
+        )
+
+    st.markdown("---")
+
+    # 筛选区域
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
-        selected_category = st.selectbox("分类", ["全部"] + list(set(t.get('category', '未分类') for t in st.session_state.tasks)))
+        selected_category = st.selectbox("分类", ["全部"] + service.get_categories())
     with col2:
-        selected_priority = st.selectbox("优先级", ["全部", "高", "中", "低"])
+        selected_quadrant = st.selectbox("象限", ["全部", 1, 2, 3, 4])
     with col3:
         st.write("")
         if st.button("刷新"):
             st.rerun()
 
-    # 筛选任务 - 使用列表推导式（Python高级特性 - 列表推导式）
-    filtered_tasks = st.session_state.tasks
-    if selected_category != "全部":
-        filtered_tasks = [t for t in filtered_tasks if t.get('category', '未分类') == selected_category]
-    if selected_priority != "全部":
-        filtered_tasks = [t for t in filtered_tasks if t.get('priority', '中') == selected_priority]
+    # 应用搜索、筛选、排序
+    # 1. 先搜索（可选）
+    if search_keyword:
+        tasks_to_process = service.search_tasks(search_keyword)
+    else:
+        tasks_to_process = service.get_all_tasks()
 
-    # 删除原来的简单统计显示
-    # st.subheader(f"共 {len(filtered_tasks)} 个任务")
+    # 2. 再筛选（可选）
+    category_filter = None if selected_category == "全部" else selected_category
+    quadrant_filter = None if selected_quadrant == "全部" else int(selected_quadrant)
+    if category_filter or quadrant_filter:
+        # 手动筛选已搜索的结果
+        filtered_tasks = []
+        for task in tasks_to_process:
+            if category_filter and task["category"] != category_filter:
+                continue
+            if quadrant_filter and task["quadrant"] != quadrant_filter:
+                continue
+            filtered_tasks.append(task)
+    else:
+        filtered_tasks = tasks_to_process
 
-    # 按优先级排序显示
-    priority_order = {'高': 0, '中': 1, '低': 2}
-    filtered_tasks.sort(key=lambda x: priority_order.get(x.get('priority', '中'), 1))
+    # 3. 最后排序
+    sort_key = sort_option[1]
+    sorted_tasks = service.get_sorted_tasks(sort_key) if not search_keyword and not category_filter and not quadrant_filter else sorted(
+        filtered_tasks,
+        key=lambda t: (t["created_at"] if "created" in sort_key else t["updated_at"], t["id"]),
+        reverse="desc" in sort_key,
+    )
 
-    # 显示任务
-    if not filtered_tasks:
+    # 列表视图（保留原有"任务列表 + 编辑删除"主操作体验）
+    st.subheader(f"当前结果：{len(sorted_tasks)} 个任务")
+    if not sorted_tasks:
         st.info("暂无任务")
     else:
-        for idx, task in enumerate(filtered_tasks):
-            task_id = task['id']
-            priority = task.get('priority', '中')
-            category = task.get('category', '未分类')
-            completed = task.get('completed', False)
-            created_at = task.get('created_at', '')
+        for task in sorted_tasks:
+            render_task_item(task)
 
-            # 优先级颜色
-            priority_color = {
-                '高': '🔴',
-                '中': '🟡',
-                '低': '🟢'
-            }.get(priority, '⚪')
+    # 保留四象限视图与分类视图
+    st.subheader("视图面板")
+    tab_quadrant, tab_category = st.tabs(["四象限视图", "分类视图"])
 
-            # 任务卡片
-            with st.container():
-                col1, col2, col3, col4 = st.columns([0.5, 4, 2, 1])
+    with tab_quadrant:
+        quadrant_groups = {1: [], 2: [], 3: [], 4: []}
+        for task in sorted_tasks:
+            quadrant_groups[task["quadrant"]].append(task)
 
-                with col1:
-                    st.checkbox("", value=completed, key=f"check_{task_id}")
+        q_col1, q_col2 = st.columns(2)
+        with q_col1:
+            st.markdown("### Q1")
+            st.caption(quadrant_label(1))
+            for task in quadrant_groups[1]:
+                st.write(f"- {task['title']}（{task['category']}）")
+            st.markdown("### Q3")
+            st.caption(quadrant_label(3))
+            for task in quadrant_groups[3]:
+                st.write(f"- {task['title']}（{task['category']}）")
+        with q_col2:
+            st.markdown("### Q2")
+            st.caption(quadrant_label(2))
+            for task in quadrant_groups[2]:
+                st.write(f"- {task['title']}（{task['category']}）")
+            st.markdown("### Q4")
+            st.caption(quadrant_label(4))
+            for task in quadrant_groups[4]:
+                st.write(f"- {task['title']}（{task['category']}）")
 
-                with col2:
-                    title_style = "~~{}~~" if completed else "{}"
-                    st.markdown(title_style.format(task['title']))
+    with tab_category:
+        category_groups = {category: [] for category in service.get_categories()}
+        for task in sorted_tasks:
+            category_groups[task["category"]].append(task)
 
-                with col3:
-                    st.markdown(f"{priority_color} {priority} | {category}")
+        for category in service.get_categories():
+            with st.expander(f"{category}（{len(category_groups[category])}）", expanded=True):
+                if not category_groups[category]:
+                    st.write("- 暂无任务")
+                else:
+                    for task in category_groups[category]:
+                        st.write(f"- {task['title']}（Q{task['quadrant']}）")
 
-                with col4:
-                    if st.button("编辑", key=f"edit_{task_id}"):
-                        st.session_state.edit_id = task_id
-                        st.rerun()
-                    if st.button("删除", key=f"del_{task_id}"):
-                        st.session_state.tasks = [t for t in st.session_state.tasks if t['id'] != task_id]
-                        st.rerun()
-
-                st.caption(f"创建时间: {created_at}")
-                st.markdown("---")
-
-    # 添加任务按钮
     if st.button("➕ 添加任务", use_container_width=True):
         st.session_state.page = "添加任务"
         st.session_state.edit_id = None
         st.rerun()
 
-# 添加/编辑任务页面
-elif page == "添加任务" or st.session_state.get('page') == "添加任务":
-    st.header("添加任务" if st.session_state.get('edit_id') is None else "编辑任务")
+elif page == "添加任务":
+    is_edit = st.session_state.edit_id is not None
+    st.header("编辑任务" if is_edit else "添加任务")
 
-    # 检查是否是编辑模式
-    edit_id = st.session_state.get('edit_id')
-    edit_task = None
-    if edit_id:
-        for task in st.session_state.tasks:
-            if task['id'] == edit_id:
-                edit_task = task
-                break
+    edit_task = service.get_task_by_id(st.session_state.edit_id) if is_edit else None
+    if is_edit and edit_task is None:
+        st.warning("任务不存在，已返回任务列表。")
+        st.session_state.edit_id = None
+        st.session_state.page = "任务列表"
+        st.rerun()
 
-    # 任务表单
+    categories = service.get_categories()
+    quadrant_options = [1, 2, 3, 4]
+
     with st.form("task_form"):
-        title = st.text_input("任务标题", value=edit_task['title'] if edit_task else "")
+        title = st.text_input("任务标题", value=edit_task["title"] if edit_task else "")
+        description = st.text_area("任务描述", value=edit_task["description"] if edit_task else "")
 
         col1, col2 = st.columns(2)
         with col1:
-            category = st.text_input("分类", value=edit_task.get('category', '') if edit_task else "",
-                                    placeholder="例如: 工作、学习、生活")
+            default_category = edit_task["category"] if edit_task else categories[0]
+            category = st.selectbox("分类", categories, index=categories.index(default_category))
         with col2:
-            priority = st.selectbox("优先级", ["高", "中", "低"],
-                                   index=["高", "中", "低"].index(edit_task.get('priority', '中')) if edit_task else 1)
+            default_quadrant = edit_task["quadrant"] if edit_task else 1
+            quadrant = st.selectbox("象限", quadrant_options, index=quadrant_options.index(default_quadrant))
 
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.form_submit_button("保存", use_container_width=True):
-                # ===== 任务标题验证功能 =====
-                # 使用 str.strip() 去除首尾空格（Python字符串方法）
-                title_trimmed = title.strip()
-                title_length = len(title_trimmed)  # 使用 len() 获取字符串长度
+        action_col1, action_col2 = st.columns([1, 1])
+        with action_col1:
+            submit_save = st.form_submit_button("保存", use_container_width=True)
+        with action_col2:
+            submit_cancel = st.form_submit_button("取消", use_container_width=True)
 
-                # ===== 使用 if/elif/else 条件判断进行验证 =====
-                if not title_trimmed:
-                    # 使用 st.error() 显示错误信息（Streamlit组件）
-                    st.error("❌ 错误：任务标题不能为空！")
-                elif title_length < 2:
-                    # 使用 st.warning() 显示警告信息（Streamlit组件）
-                    st.warning("⚠️ 警告：任务标题太短（至少2个字符）")
-                elif title_length > 50:
-                    st.warning("⚠️ 警告：任务标题过长（建议不超过50个字符）")
+    if submit_save:
+        title_trimmed = title.strip()
+        if not title_trimmed:
+            st.error("❌ 错误：任务标题不能为空！")
+        elif len(title_trimmed) < 2:
+            st.warning("⚠️ 警告：任务标题太短（至少2个字符）")
+        elif len(title_trimmed) > 50:
+            st.warning("⚠️ 警告：任务标题过长（建议不超过50个字符）")
+        else:
+            try:
+                if is_edit:
+                    service.update_task(
+                        task_id=st.session_state.edit_id,
+                        title=title_trimmed,
+                        description=description,
+                        category=category,
+                        quadrant=quadrant,
+                    )
+                    st.success("✅ 任务更新成功！")
                 else:
-                    # 验证通过，保存任务
-                    if edit_id:
-                        # 更新现有任务 - 使用 for 循环查找并更新任务
-                        for task in st.session_state.tasks:  # 遍历列表
-                            if task['id'] == edit_id:  # 条件判断
-                                task['title'] = title_trimmed
-                                task['category'] = category if category else '未分类'
-                                task['priority'] = priority
-                                break  # 跳出循环
-                        st.success("✅ 任务更新成功！")
-                    else:
-                        # 添加新任务 - 使用字典创建任务对象
-                        new_task = {  # Python字典字面量
-                            'id': len(st.session_state.tasks) + 1,
-                            'title': title_trimmed,
-                            'category': category if category else '未分类',
-                            'priority': priority,
-                            'completed': False,
-                            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M")
-                        }
-                        # 使用 list.append() 方法添加元素到列表
-                        st.session_state.tasks.append(new_task)
-                        st.success("✅ 任务添加成功！")
+                    service.add_task(
+                        title=title_trimmed,
+                        description=description,
+                        category=category,
+                        quadrant=quadrant,
+                    )
+                    st.success("✅ 任务添加成功！")
 
-                    # 重置页面状态
-                    st.session_state.page = "任务列表"
-                    st.session_state.edit_id = None
-                    st.rerun()
-                # ===== 任务标题验证功能结束 =====
-
-        with col2:
-            if st.form_submit_button("取消", use_container_width=True):
-                st.session_state.page = "任务列表"
                 st.session_state.edit_id = None
+                st.session_state.page = "任务列表"
                 st.rerun()
+            except ValueError as error:
+                st.error(f"❌ {error}")
 
-    # 处理完成任务
-    completed_ids = [k.replace('check_', '') for k, v in st.session_state.items()
-                    if k.startswith('check_') and isinstance(v, bool) and v]
-    for task in st.session_state.tasks:
-        task_id_str = str(task['id'])
-        if task_id_str in completed_ids:
-            task['completed'] = True
-        elif f'check_{task_id_str}' in st.session_state:
-            task['completed'] = st.session_state[f'check_{task_id_str}']
+    if submit_cancel:
+        st.session_state.edit_id = None
+        st.session_state.page = "任务列表"
+        st.rerun()
