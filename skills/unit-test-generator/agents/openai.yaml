@@ -1,0 +1,4 @@
+﻿interface:
+  display_name: "Unit Test Generator"
+  short_description: "根据目标函数或类生成可运行单元测试，覆盖正常/边界/异常场景。"
+  default_prompt: "请根据我选中的函数或类生成完整单元测试，优先使用项目现有测试框架并覆盖正常、边界、异常及分支路径。"

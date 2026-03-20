@@ -1,20 +1,17 @@
-import streamlit as st
+﻿import streamlit as st
 
 from service import TaskService
 
 
-# 设置页面配置（保持原有导航形态）
-st.set_page_config(page_title="个人能效管理", page_icon="📋")
+st.set_page_config(page_title="个人能效管理", page_icon="📵")
 
 
 @st.cache_resource
 def get_task_service() -> TaskService:
-    """缓存服务实例，避免每次重跑重复初始化连接配置。"""
     return TaskService(db_path="productivity_manager.db")
 
 
 def quadrant_label(quadrant: int) -> str:
-    """象限展示文案。"""
     labels = {
         1: "第一象限（重要且紧急）",
         2: "第二象限（重要不紧急）",
@@ -24,8 +21,69 @@ def quadrant_label(quadrant: int) -> str:
     return labels.get(quadrant, f"第{quadrant}象限")
 
 
-def render_task_item(task: dict) -> None:
-    """统一渲染任务条目，保持编辑/删除交互体验。"""
+def ensure_auth_state() -> None:
+    if "auth_token" not in st.session_state:
+        st.session_state.auth_token = None
+    if "current_user" not in st.session_state:
+        st.session_state.current_user = None
+    if "page" not in st.session_state:
+        st.session_state.page = "任务列表"
+    if "edit_id" not in st.session_state:
+        st.session_state.edit_id = None
+
+
+def do_logout(service: TaskService) -> None:
+    token = st.session_state.auth_token
+    if token:
+        service.logout(token)
+    st.session_state.auth_token = None
+    st.session_state.current_user = None
+    st.session_state.page = "任务列表"
+    st.session_state.edit_id = None
+
+
+def render_auth_page(service: TaskService) -> None:
+    st.title("个人能效系统")
+    st.subheader("请先登录")
+
+    login_tab, register_tab = st.tabs(["登录", "注册"])
+
+    with login_tab:
+        with st.form("login_form"):
+            username = st.text_input("用户名")
+            password = st.text_input("密码", type="password")
+            submit_login = st.form_submit_button("登录", use_container_width=True)
+
+        if submit_login:
+            result = service.login_user(username, password)
+            if not result:
+                st.error("用户名或密码错误")
+            else:
+                st.session_state.auth_token = result["token"]
+                st.session_state.current_user = result["user"]
+                st.success("登录成功")
+                st.rerun()
+
+    with register_tab:
+        with st.form("register_form"):
+            username = st.text_input("注册用户名")
+            password = st.text_input("注册密码", type="password")
+            confirm_password = st.text_input("确认密码", type="password")
+            submit_register = st.form_submit_button("注册", use_container_width=True)
+
+        if submit_register:
+            if password != confirm_password:
+                st.error("两次输入的密码不一致")
+            else:
+                try:
+                    service.register_user(username, password)
+                    st.success("注册成功，请在登录页登录")
+                except ValueError as error:
+                    st.error(f"注册失败：{error}")
+
+
+
+def render_task_item(service: TaskService, user_id: int, task: dict) -> None:
     task_id = task["id"]
     with st.container():
         col1, col2, col3 = st.columns([4, 2, 1])
@@ -43,35 +101,47 @@ def render_task_item(task: dict) -> None:
                 st.session_state.page = "添加任务"
                 st.rerun()
             if st.button("删除", key=f"del_{task_id}"):
-                service = get_task_service()
-                service.delete_task(task_id)
-                st.success("✅ 任务删除成功！")
+                service.delete_task(task_id, user_id)
+                st.success("任务删除成功")
                 st.rerun()
         st.markdown("---")
 
 
-# 初始化仅用于 UI 状态，不再存储业务数据
-if "page" not in st.session_state:
-    st.session_state.page = "任务列表"
-if "edit_id" not in st.session_state:
-    st.session_state.edit_id = None
-
+ensure_auth_state()
 service = get_task_service()
 
-# 侧边栏（布局与原有结构保持一致）
-st.sidebar.title("📋 个人能效管理")
+# Validate token every run.
+current_user = None
+if st.session_state.auth_token:
+    current_user = service.verify_token(st.session_state.auth_token)
+    if current_user is None:
+        do_logout(service)
+
+if current_user is None:
+    render_auth_page(service)
+    st.stop()
+
+user_id = current_user["id"]
+st.session_state.current_user = {
+    "id": current_user["id"],
+    "username": current_user["username"],
+    "created_at": current_user["created_at"],
+}
+
+st.sidebar.title("📵 个人能效管理")
+st.sidebar.caption(f"当前用户：{current_user['username']}")
+if st.sidebar.button("退出登录", use_container_width=True):
+    do_logout(service)
+    st.rerun()
+
 sidebar_page = st.sidebar.radio("选择页面", ["任务列表", "添加任务"])
-
-# 以 session_state.page 作为“按钮跳转”后的主路由，兼容原有交互习惯
 page = st.session_state.page if st.session_state.page != "任务列表" else sidebar_page
-
 
 if page == "任务列表":
     st.header("任务列表")
 
-    # 统计区域
-    st.subheader("📊 任务统计")
-    stats = service.get_statistics()
+    st.subheader("任务统计")
+    stats = service.get_statistics(user_id)
     stat_col1, stat_col2, stat_col3 = st.columns(3)
 
     with stat_col1:
@@ -89,8 +159,7 @@ if page == "任务列表":
 
     st.markdown("---")
 
-    # 搜索区域
-    st.subheader("🔍 搜索与排序")
+    st.subheader("搜索与排序")
     search_col, sort_col = st.columns([2, 2])
     with search_col:
         search_keyword = st.text_input("搜索任务（按标题或描述）", placeholder="输入关键词...")
@@ -99,16 +168,15 @@ if page == "任务列表":
             "排序方式",
             [
                 ("最新创建优先", "created_desc"),
-                ("最旧创建优先", "created_asc"),
+                ("最早创建优先", "created_asc"),
                 ("最新更新优先", "updated_desc"),
-                ("最旧更新优先", "updated_asc"),
+                ("最早更新优先", "updated_asc"),
             ],
             format_func=lambda x: x[0],
         )
 
     st.markdown("---")
 
-    # 筛选区域
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
         selected_category = st.selectbox("分类", ["全部"] + service.get_categories())
@@ -119,18 +187,15 @@ if page == "任务列表":
         if st.button("刷新"):
             st.rerun()
 
-    # 应用搜索、筛选、排序
-    # 1. 先搜索（可选）
     if search_keyword:
-        tasks_to_process = service.search_tasks(search_keyword)
+        tasks_to_process = service.search_tasks(user_id=user_id, keyword=search_keyword)
     else:
-        tasks_to_process = service.get_all_tasks()
+        tasks_to_process = service.get_all_tasks(user_id=user_id)
 
-    # 2. 再筛选（可选）
     category_filter = None if selected_category == "全部" else selected_category
     quadrant_filter = None if selected_quadrant == "全部" else int(selected_quadrant)
+
     if category_filter or quadrant_filter:
-        # 手动筛选已搜索的结果
         filtered_tasks = []
         for task in tasks_to_process:
             if category_filter and task["category"] != category_filter:
@@ -141,23 +206,23 @@ if page == "任务列表":
     else:
         filtered_tasks = tasks_to_process
 
-    # 3. 最后排序
     sort_key = sort_option[1]
-    sorted_tasks = service.get_sorted_tasks(sort_key) if not search_keyword and not category_filter and not quadrant_filter else sorted(
-        filtered_tasks,
-        key=lambda t: (t["created_at"] if "created" in sort_key else t["updated_at"], t["id"]),
-        reverse="desc" in sort_key,
-    )
+    if not search_keyword and not category_filter and not quadrant_filter:
+        sorted_tasks = service.get_sorted_tasks(user_id=user_id, sort_by=sort_key)
+    else:
+        sorted_tasks = sorted(
+            filtered_tasks,
+            key=lambda t: (t["created_at"] if "created" in sort_key else t["updated_at"], t["id"]),
+            reverse="desc" in sort_key,
+        )
 
-    # 列表视图（保留原有"任务列表 + 编辑删除"主操作体验）
     st.subheader(f"当前结果：{len(sorted_tasks)} 个任务")
     if not sorted_tasks:
         st.info("暂无任务")
     else:
         for task in sorted_tasks:
-            render_task_item(task)
+            render_task_item(service, user_id, task)
 
-    # 保留四象限视图与分类视图
     st.subheader("视图面板")
     tab_quadrant, tab_category = st.tabs(["四象限视图", "分类视图"])
 
@@ -187,11 +252,12 @@ if page == "任务列表":
                 st.write(f"- {task['title']}（{task['category']}）")
 
     with tab_category:
-        category_groups = {category: [] for category in service.get_categories()}
+        categories = service.get_categories()
+        category_groups = {category: [] for category in categories}
         for task in sorted_tasks:
             category_groups[task["category"]].append(task)
 
-        for category in service.get_categories():
+        for category in categories:
             with st.expander(f"{category}（{len(category_groups[category])}）", expanded=True):
                 if not category_groups[category]:
                     st.write("- 暂无任务")
@@ -199,7 +265,7 @@ if page == "任务列表":
                     for task in category_groups[category]:
                         st.write(f"- {task['title']}（Q{task['quadrant']}）")
 
-    if st.button("➕ 添加任务", use_container_width=True):
+    if st.button("+ 添加任务", use_container_width=True):
         st.session_state.page = "添加任务"
         st.session_state.edit_id = None
         st.rerun()
@@ -208,7 +274,7 @@ elif page == "添加任务":
     is_edit = st.session_state.edit_id is not None
     st.header("编辑任务" if is_edit else "添加任务")
 
-    edit_task = service.get_task_by_id(st.session_state.edit_id) if is_edit else None
+    edit_task = service.get_task_by_id(st.session_state.edit_id, user_id) if is_edit else None
     if is_edit and edit_task is None:
         st.warning("任务不存在，已返回任务列表。")
         st.session_state.edit_id = None
@@ -239,36 +305,38 @@ elif page == "添加任务":
     if submit_save:
         title_trimmed = title.strip()
         if not title_trimmed:
-            st.error("❌ 错误：任务标题不能为空！")
+            st.error("错误：任务标题不能为空")
         elif len(title_trimmed) < 2:
-            st.warning("⚠️ 警告：任务标题太短（至少2个字符）")
+            st.warning("警告：任务标题太短（至少2个字符）")
         elif len(title_trimmed) > 50:
-            st.warning("⚠️ 警告：任务标题过长（建议不超过50个字符）")
+            st.warning("警告：任务标题过长（建议不超过50个字符）")
         else:
             try:
                 if is_edit:
                     service.update_task(
                         task_id=st.session_state.edit_id,
+                        user_id=user_id,
                         title=title_trimmed,
                         description=description,
                         category=category,
                         quadrant=quadrant,
                     )
-                    st.success("✅ 任务更新成功！")
+                    st.success("任务更新成功")
                 else:
                     service.add_task(
+                        user_id=user_id,
                         title=title_trimmed,
                         description=description,
                         category=category,
                         quadrant=quadrant,
                     )
-                    st.success("✅ 任务添加成功！")
+                    st.success("任务添加成功")
 
                 st.session_state.edit_id = None
                 st.session_state.page = "任务列表"
                 st.rerun()
             except ValueError as error:
-                st.error(f"❌ {error}")
+                st.error(f"{error}")
 
     if submit_cancel:
         st.session_state.edit_id = None

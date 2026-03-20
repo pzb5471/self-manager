@@ -1,0 +1,4 @@
+﻿interface:
+  display_name: "Code Review Expert"
+  short_description: "Scan Python app changes for bugs, security risks, regressions, and missing tests."
+  default_prompt: "Review code changes with a focus on defects, auth/security risks, data integrity, and test gaps. Provide findings by severity with file and line references."
