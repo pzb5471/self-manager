@@ -1,0 +1,67 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>个人能效管理</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+
+  <section id="auth-view" class="auth-shell">
+    <div class="auth-intro">
+      <h1>个人能效管理</h1>
+      <p>专注重要事项，避免被紧急事务牵着走。</p>
+      <ul>
+        <li>四象限可视化任务管理</li>
+        <li>图表化统计总览</li>
+        <li>多用户数据隔离</li>
+      </ul>
+    </div>
+    <div class="auth-card">
+      <div class="tabs">
+        <button id="tab-login" class="tab active">登录</button>
+        <button id="tab-register" class="tab">注册</button>
+      </div>
+
+      <form id="login-form" class="form">
+        <label>用户名 <input id="login-username" required /></label>
+        <label>密码 <input id="login-password" type="password" required /></label>
+        <label class="remember-row"><input id="login-remember-me" type="checkbox" /> 记住我（7天内免登录）</label>
+        <button type="submit" class="btn primary">登录</button>
+      </form>
+
+      <form id="register-form" class="form hidden">
+        <label>注册用户名 <input id="reg-username" required /></label>
+        <label>注册密码 <input id="reg-password" type="password" required /></label>
+        <label>确认密码 <input id="reg-confirm" type="password" required /></label>
+        <button type="submit" class="btn primary">注册</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <div>
+        <h2>Self Manager</h2>
+        <p id="user-label"></p>
+      </div>
+      <nav>
+        <button class="nav-btn active" data-page="dashboard">统计首页</button>
+        <button class="nav-btn" data-page="quadrant">四象限任务</button>
+        <button class="nav-btn" data-page="editor">添加任务</button>
+      </nav>
+      <button id="logout-btn" class="btn ghost">退出登录</button>
+    </aside>
+
+    <main class="main">
+      <section id="page-dashboard" class="page"></section>
+      <section id="page-quadrant" class="page hidden"></section>
+      <section id="page-editor" class="page hidden"></section>
+    </main>
+  </section>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

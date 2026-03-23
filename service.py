@@ -24,6 +24,7 @@ class TaskService:
     DEFAULT_CATEGORIES = ["工作", "学习", "生活", "健康"]
     PASSWORD_ITERATIONS = 100_000
     TOKEN_TTL_HOURS = 24
+    TOKEN_TTL_REMEMBER_HOURS = 24 * 7
 
     def __init__(self, db_path: str = "productivity_manager.db"):
         self.db_path = str(Path(db_path))
@@ -146,7 +147,7 @@ class TaskService:
         conn.close()
         return {"id": row["id"], "username": row["username"], "created_at": row["created_at"]}
 
-    def login_user(self, username: str, password: str) -> Optional[Dict]:
+    def login_user(self, username: str, password: str, remember_me: bool = False) -> Optional[Dict]:
         username_norm = username.strip()
         if not username_norm or not password:
             return None
@@ -175,7 +176,8 @@ class TaskService:
         token_hash = self._hash_token(token)
         # Keep legacy token column non-sensitive and unusable for authentication.
         token_placeholder = secrets.token_urlsafe(16)
-        expires_at = (datetime.utcnow() + timedelta(hours=self.TOKEN_TTL_HOURS)).strftime(
+        ttl_hours = self.TOKEN_TTL_REMEMBER_HOURS if remember_me else self.TOKEN_TTL_HOURS
+        expires_at = (datetime.utcnow() + timedelta(hours=ttl_hours)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
 
