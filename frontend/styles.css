@@ -193,7 +193,7 @@ textarea { min-height: 100px; resize: vertical; }
 
 .filters {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -226,6 +226,10 @@ textarea { min-height: 100px; resize: vertical; }
   border: 2px solid #fff;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.16);
 }
+.task-dot.is-completed {
+  opacity: 0.45;
+  transform: translate(-50%, -50%) scale(0.9);
+}
 .q1 { background: #c2410c; }
 .q2 { background: #0f766e; }
 .q3 { background: #2563eb; }
@@ -241,8 +245,52 @@ textarea { min-height: 100px; resize: vertical; }
   grid-template-columns: 1fr auto;
   gap: 12px;
 }
+.task-card.is-completed {
+  background: #f8fafc;
+}
+.task-card.is-completed .task-title,
+.task-card.is-completed p {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.task-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+.task-check {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-weight: 700;
+}
+.task-check input {
+  width: auto;
+}
+.task-title {
+  font-size: 18px;
+  line-height: 1.3;
+}
+.category-badge {
+  background: color-mix(in srgb, var(--badge) 16%, white);
+  color: var(--badge);
+  border: 1px solid color-mix(in srgb, var(--badge) 28%, white);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 .task-meta { color: var(--muted); font-size: 13px; }
 .task-actions { display: flex; gap: 8px; align-items: start; }
+.empty-state {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 18px;
+  color: var(--muted);
+}
 
 .editor-card {
   max-width: 760px;
@@ -252,6 +300,34 @@ textarea { min-height: 100px; resize: vertical; }
   background: #fff;
 }
 .editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.categories-layout {
+  align-items: start;
+}
+.category-list {
+  display: grid;
+  gap: 10px;
+}
+.category-row {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+.category-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.category-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.8), 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
 
 .toast {
   position: fixed;

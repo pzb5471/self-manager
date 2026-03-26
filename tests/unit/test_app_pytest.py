@@ -1,9 +1,9 @@
 ﻿"""Pytest tests for TaskService authentication and per-user SQLite behavior."""
 
+import hashlib
 import sqlite3
 import sys
 import time
-import hashlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,15 +14,13 @@ sys.path.insert(0, str(project_root))
 
 from service import TaskService
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def service_ctx():
-    project_root = Path(__file__).resolve().parents[2]
-    db_dir = project_root / "tests" / ".tmp"
-    db_dir.mkdir(parents=True, exist_ok=True)
-    db_path = db_dir / f"test_{uuid4().hex}.db"
-
-    service = TaskService(db_path=str(db_path))
+    db_path = f"file:unit_service_{uuid4().hex}?mode=memory&cache=shared"
+    service = TaskService(db_path=db_path)
 
     user_a = service.register_user("alice", "alice123")
     user_b = service.register_user("bob", "bob12345")
@@ -47,18 +45,15 @@ def service_ctx():
     try:
         yield ctx
     finally:
-        if db_path.exists():
-            db_path.unlink()
+        service.close()
 
 
 def test_database_file_and_schema_created(service_ctx):
     db_path = service_ctx["db_path"]
-    assert db_path.exists()
-
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, uri=True)
     cursor = conn.cursor()
 
-    for table_name in ("tasks", "users", "auth_tokens"):
+    for table_name in ("tasks", "users", "auth_tokens", "categories"):
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
         assert cursor.fetchone() is not None, f"Missing table: {table_name}"
 
@@ -67,6 +62,9 @@ def test_database_file_and_schema_created(service_ctx):
         "idx_tasks_quadrant",
         "idx_tasks_created_at",
         "idx_tasks_user_id",
+        "idx_tasks_user_completed",
+        "idx_tasks_category_id",
+        "idx_categories_user_name",
         "idx_auth_tokens_token",
         "idx_auth_tokens_token_hash",
     ):
@@ -99,7 +97,7 @@ def test_auth_token_stores_hash_not_plaintext(service_ctx):
     user_a_id = service_ctx["user_a_id"]
     token_a = service_ctx["token_a"]
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, uri=True)
     cursor = conn.cursor()
     cursor.execute("SELECT token, token_hash FROM auth_tokens WHERE user_id = ?", (user_a_id,))
     row = cursor.fetchone()
@@ -117,7 +115,7 @@ def test_legacy_tasks_not_auto_claimed_on_login(service_ctx):
     user_a_id = service_ctx["user_a_id"]
     user_b_id = service_ctx["user_b_id"]
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, uri=True)
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -263,6 +261,46 @@ def test_filter_tasks_by_category_and_quadrant(service_ctx):
     assert filtered[0]["title"] == "Task A"
 
 
+def test_category_crud_and_task_completion_filter(service_ctx):
+    service = service_ctx["service"]
+    user_a_id = service_ctx["user_a_id"]
+
+    initial_categories = service.list_categories(user_a_id)
+    assert len(initial_categories) >= 4
+
+    created_category = service.create_category(user_a_id, "家庭", "#FF8800")
+    assert created_category["name"] == "家庭"
+    assert created_category["color"] == "#FF8800"
+
+    updated_category = service.update_category(created_category["id"], user_a_id, "家庭事务", "#0088FF")
+    assert updated_category is not None
+    assert updated_category["name"] == "家庭事务"
+    assert updated_category["color"] == "#0088FF"
+
+    task = service.add_task(user_a_id, "拖地", "周末整理", "家庭事务", 3)
+    assert task["category"] == "家庭事务"
+    assert task["completed"] is False
+
+    pending_tasks = service.get_all_tasks(user_a_id, status="pending")
+    assert any(item["id"] == task["id"] for item in pending_tasks)
+
+    assert service.set_task_completed(task["id"], user_a_id, True) is True
+    completed_task = service.get_task_by_id(task["id"], user_a_id)
+    assert completed_task is not None
+    assert completed_task["completed"] is True
+
+    pending_after = service.get_all_tasks(user_a_id, status="pending")
+    completed_after = service.get_all_tasks(user_a_id, status="completed")
+    assert not any(item["id"] == task["id"] for item in pending_after)
+    assert any(item["id"] == task["id"] for item in completed_after)
+
+    with pytest.raises(ValueError):
+        service.delete_category(updated_category["id"], user_a_id)
+
+    assert service.delete_task(task["id"], user_a_id) is True
+    assert service.delete_category(updated_category["id"], user_a_id) is True
+
+
 def test_statistics(service_ctx):
     service = service_ctx["service"]
     user_a_id = service_ctx["user_a_id"]
@@ -291,7 +329,7 @@ def test_sql_injection_is_blocked(service_ctx):
     malicious_title = "test'; DROP TABLE tasks; --"
     service.add_task(user_a_id, malicious_title, "", categories[0], 1)
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, uri=True)
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM tasks")
     count = cursor.fetchone()[0]
@@ -454,7 +492,7 @@ def test_verify_token_with_expired_token(service_ctx):
     expired_token = "expired-token-raw"
     expired_hash = hashlib.sha256(expired_token.encode("utf-8")).hexdigest()
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, uri=True)
     cursor = conn.cursor()
     cursor.execute(
         """

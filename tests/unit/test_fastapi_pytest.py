@@ -11,21 +11,17 @@ sys.path.insert(0, str(project_root))
 
 from main import create_app
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def api_ctx():
-    db_dir = project_root / "tests" / ".tmp"
-    db_dir.mkdir(parents=True, exist_ok=True)
-    db_path = db_dir / f"api_{uuid4().hex}.db"
+    db_path = f"file:unit_api_{uuid4().hex}?mode=memory&cache=shared"
 
-    app = create_app(db_path=str(db_path))
+    app = create_app(db_path=db_path)
     client = TestClient(app)
 
-    try:
-        yield {"client": client, "db_path": db_path}
-    finally:
-        if db_path.exists():
-            db_path.unlink()
+    yield {"client": client, "db_path": db_path}
 
 
 def auth_headers(token: str) -> dict:
@@ -120,6 +116,78 @@ def test_task_crud_and_filter(api_ctx):
     after_delete = client.get("/api/tasks", headers=headers)
     assert after_delete.status_code == 200
     assert after_delete.json()["items"] == []
+
+
+def test_category_management_and_status_filter(api_ctx):
+    client = api_ctx["client"]
+    token = register_and_login(client)
+    headers = auth_headers(token)
+
+    list_resp = client.get("/api/categories", headers=headers)
+    assert list_resp.status_code == 200
+    initial_count = len(list_resp.json()["items"])
+    assert initial_count >= 4
+
+    created_category = client.post(
+        "/api/categories",
+        headers=headers,
+        json={"name": "家庭", "color": "#FF8800"},
+    )
+    assert created_category.status_code == 200
+    category_id = created_category.json()["item"]["id"]
+
+    updated_category = client.put(
+        f"/api/categories/{category_id}",
+        headers=headers,
+        json={"name": "家庭事务", "color": "#0088FF"},
+    )
+    assert updated_category.status_code == 200
+    assert updated_category.json()["item"]["name"] == "家庭事务"
+
+    created_task = client.post(
+        "/api/tasks",
+        headers=headers,
+        json={
+            "title": "整理房间",
+            "description": "周末完成",
+            "category": "家庭事务",
+            "quadrant": 2,
+        },
+    )
+    assert created_task.status_code == 200
+    task_id = created_task.json()["item"]["id"]
+    assert created_task.json()["item"]["completed"] is False
+
+    default_list = client.get("/api/tasks", headers=headers)
+    assert default_list.status_code == 200
+    assert len(default_list.json()["items"]) == 1
+
+    complete_resp = client.patch(
+        f"/api/tasks/{task_id}/status",
+        headers=headers,
+        json={"completed": True},
+    )
+    assert complete_resp.status_code == 200
+    assert complete_resp.json()["item"]["completed"] is True
+
+    pending_list = client.get("/api/tasks?status=pending", headers=headers)
+    completed_list = client.get("/api/tasks?status=completed", headers=headers)
+    all_list = client.get("/api/tasks?status=all", headers=headers)
+    assert pending_list.status_code == 200
+    assert completed_list.status_code == 200
+    assert all_list.status_code == 200
+    assert pending_list.json()["items"] == []
+    assert len(completed_list.json()["items"]) == 1
+    assert len(all_list.json()["items"]) == 1
+
+    delete_used_category = client.delete(f"/api/categories/{category_id}", headers=headers)
+    assert delete_used_category.status_code == 400
+
+    delete_task = client.delete(f"/api/tasks/{task_id}", headers=headers)
+    assert delete_task.status_code == 200
+
+    delete_category = client.delete(f"/api/categories/{category_id}", headers=headers)
+    assert delete_category.status_code == 200
 
 
 def test_dashboard_stats(api_ctx):

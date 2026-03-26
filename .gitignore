@@ -29,6 +29,12 @@ proguard/
 
 # Log Files
 *.log
+logs/
+__pycache__/
+.pytest_cache/
+tests/.tmp/
+tests/integration/.tmp/
+*.db-journal
 
 # Android Studio Navigation editor temp files
 .navigation/
