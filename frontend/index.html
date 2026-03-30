@@ -48,21 +48,21 @@
         <p id="user-label"></p>
       </div>
       <nav>
-        <button class="nav-btn active" data-page="dashboard">统计首页</button>
-        <button class="nav-btn" data-page="quadrant">四象限任务</button>
-        <button class="nav-btn" data-page="editor">添加任务</button>
+        <button class="nav-btn active" data-page="home">首页</button>
         <button class="nav-btn" data-page="categories">分类管理</button>
+        <button class="nav-btn" data-page="stats">任务统计</button>
       </nav>
       <button id="logout-btn" class="btn ghost">退出登录</button>
     </aside>
 
     <main class="main">
-      <section id="page-dashboard" class="page"></section>
-      <section id="page-quadrant" class="page hidden"></section>
-      <section id="page-editor" class="page hidden"></section>
+      <section id="page-home" class="page"></section>
       <section id="page-categories" class="page hidden"></section>
+      <section id="page-stats" class="page hidden"></section>
     </main>
   </section>
+
+  <div id="modal-root" class="hidden"></div>
 
   <script src="/assets/app.js"></script>
 </body>

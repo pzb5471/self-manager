@@ -88,10 +88,13 @@ def test_task_full_lifecycle(integration_ctx):
             "description": "created in integration test",
             "category": categories["alpha"],
             "quadrant": 1,
+            "due_at": "2026-04-01T10:00",
+            "recurrence_rule": "none",
         },
     )
     assert create_resp.status_code == 200
     task_id = create_resp.json()["item"]["id"]
+    assert create_resp.json()["item"]["due_at"] == "2026-04-01 10:00:00"
 
     query_resp = client.get("/api/tasks?status=all", headers=headers)
     assert query_resp.status_code == 200
@@ -105,10 +108,13 @@ def test_task_full_lifecycle(integration_ctx):
             "description": "updated in integration test",
             "category": categories["beta"],
             "quadrant": 2,
+            "due_at": "",
+            "recurrence_rule": "weekly",
         },
     )
     assert update_resp.status_code == 200
     assert update_resp.json()["item"]["title"] == "Integration Task Updated"
+    assert update_resp.json()["item"]["recurrence_rule"] == "weekly"
 
     delete_resp = client.delete(f"/api/tasks/{task_id}", headers=headers)
     assert delete_resp.status_code == 200
@@ -236,3 +242,83 @@ def test_combined_filter_by_category_and_quadrant(integration_ctx):
     assert filtered_resp.status_code == 200
     filtered_titles = {item["title"] for item in filtered_resp.json()["items"]}
     assert filtered_titles == {"Target-1", "Target-2"}
+
+
+def test_schedule_overview_and_calendar(integration_ctx):
+    client = integration_ctx["client"]
+    headers = integration_ctx["headers"]
+    categories = integration_ctx["categories"]
+
+    payloads = [
+        {
+            "title": "One shot",
+            "description": "",
+            "category": categories["alpha"],
+            "quadrant": 1,
+            "due_at": "2026-03-30T11:00",
+            "recurrence_rule": "none",
+        },
+        {
+            "title": "Recurring",
+            "description": "",
+            "category": categories["beta"],
+            "quadrant": 2,
+            "due_at": "2026-03-29T08:00",
+            "recurrence_rule": "daily",
+        },
+        {
+            "title": "No deadline",
+            "description": "",
+            "category": categories["beta"],
+            "quadrant": 3,
+            "due_at": "",
+            "recurrence_rule": "none",
+        },
+    ]
+
+    for payload in payloads:
+        resp = client.post("/api/tasks", headers=headers, json=payload)
+        assert resp.status_code == 200
+
+    overview = client.get("/api/schedule/overview", headers=headers)
+    assert overview.status_code == 200
+    today_titles = {item["title"] for item in overview.json()["today"]}
+    assert "One shot" in today_titles
+    assert "Recurring" in today_titles
+    assert "No deadline" not in today_titles
+
+    calendar = client.get("/api/schedule/calendar?start_date=2026-03-30&days=7", headers=headers)
+    assert calendar.status_code == 200
+    body = calendar.json()
+    assert body["start_date"] == "2026-03-30"
+    assert "2026-03-30" in body["by_date"]
+    assert all(item["title"] != "No deadline" for item in body["items"])
+
+
+def test_csv_backup_export_and_import(integration_ctx):
+    client = integration_ctx["client"]
+    headers = integration_ctx["headers"]
+    category = integration_ctx["categories"]["alpha"]
+
+    create_resp = client.post(
+        "/api/tasks",
+        headers=headers,
+        json={
+            "title": "CSV Backup",
+            "description": "round trip",
+            "category": category,
+            "quadrant": 2,
+            "due_at": "2026-04-20T08:00",
+            "recurrence_rule": "monthly",
+        },
+    )
+    assert create_resp.status_code == 200
+
+    export_resp = client.get("/api/tasks/export", headers=headers)
+    assert export_resp.status_code == 200
+    csv_text = export_resp.text
+    assert "CSV Backup" in csv_text
+
+    import_resp = client.post("/api/tasks/import", headers=headers, json={"csv_text": csv_text})
+    assert import_resp.status_code == 200
+    assert import_resp.json()["imported"] >= 1

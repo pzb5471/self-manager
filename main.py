@@ -1,12 +1,13 @@
 ﻿from __future__ import annotations
 
 import os
+from urllib.parse import quote
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -31,6 +32,8 @@ class TaskPayload(BaseModel):
     description: str = ""
     category: str
     quadrant: int
+    due_at: str = ""
+    recurrence_rule: str = "none"
 
 
 class CategoryPayload(BaseModel):
@@ -40,6 +43,10 @@ class CategoryPayload(BaseModel):
 
 class TaskStatusPayload(BaseModel):
     completed: bool
+
+
+class TaskImportPayload(BaseModel):
+    csv_text: str = Field(min_length=1)
 
 
 def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
@@ -180,6 +187,8 @@ def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
                 description=payload.description,
                 category=payload.category,
                 quadrant=payload.quadrant,
+                due_at=payload.due_at,
+                recurrence_rule=payload.recurrence_rule,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -195,6 +204,8 @@ def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
                 description=payload.description,
                 category=payload.category,
                 quadrant=payload.quadrant,
+                due_at=payload.due_at,
+                recurrence_rule=payload.recurrence_rule,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -219,6 +230,40 @@ def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
             raise HTTPException(status_code=404, detail="任务不存在")
         task = service.get_task_by_id(task_id, int(user["id"]))
         return {"ok": True, "item": task}
+
+    @app.get("/api/tasks/export")
+    def export_tasks(user: dict = Depends(require_user)) -> Response:
+        csv_text = service.export_tasks_csv(int(user["id"]))
+        filename = quote(f"self-manager-tasks-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv")
+        headers = {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+        }
+        return Response(content=csv_text, media_type="text/csv; charset=utf-8", headers=headers)
+
+    @app.post("/api/tasks/import")
+    def import_tasks(payload: TaskImportPayload, user: dict = Depends(require_user)) -> dict:
+        try:
+            result = service.import_tasks_csv(int(user["id"]), payload.csv_text)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **result}
+
+    @app.get("/api/schedule/overview")
+    def schedule_overview(user: dict = Depends(require_user)) -> dict:
+        overview = service.get_schedule_overview(int(user["id"]))
+        return {"ok": True, **overview}
+
+    @app.get("/api/schedule/calendar")
+    def schedule_calendar(
+        start_date: str = "",
+        days: int = 35,
+        user: dict = Depends(require_user),
+    ) -> dict:
+        try:
+            calendar = service.get_calendar_view(int(user["id"]), start_date=start_date or None, days=days)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **calendar}
 
     @app.get("/api/stats/dashboard")
     def dashboard_stats(user: dict = Depends(require_user)) -> dict:

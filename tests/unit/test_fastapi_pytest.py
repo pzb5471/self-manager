@@ -86,10 +86,13 @@ def test_task_crud_and_filter(api_ctx):
             "description": "monthly summary",
             "category": "工作",
             "quadrant": 1,
+            "due_at": "2026-04-01T09:00",
+            "recurrence_rule": "none",
         },
     )
     assert created.status_code == 200
     task_id = created.json()["item"]["id"]
+    assert created.json()["item"]["due_at"] == "2026-04-01 09:00:00"
 
     updated = client.put(
         f"/api/tasks/{task_id}",
@@ -99,10 +102,14 @@ def test_task_crud_and_filter(api_ctx):
             "description": "updated",
             "category": "学习",
             "quadrant": 2,
+            "due_at": "",
+            "recurrence_rule": "weekly",
         },
     )
     assert updated.status_code == 200
     assert updated.json()["item"]["title"] == "Project report v2"
+    assert updated.json()["item"]["due_at"] is None
+    assert updated.json()["item"]["recurrence_rule"] == "weekly"
 
     filtered = client.get("/api/tasks?keyword=report&category=学习&quadrant=2", headers=headers)
     assert filtered.status_code == 200
@@ -152,11 +159,14 @@ def test_category_management_and_status_filter(api_ctx):
             "description": "周末完成",
             "category": "家庭事务",
             "quadrant": 2,
+            "due_at": "2026-04-06T20:30",
+            "recurrence_rule": "monthly",
         },
     )
     assert created_task.status_code == 200
     task_id = created_task.json()["item"]["id"]
     assert created_task.json()["item"]["completed"] is False
+    assert created_task.json()["item"]["recurrence_rule"] == "monthly"
 
     default_list = client.get("/api/tasks", headers=headers)
     assert default_list.status_code == 200
@@ -211,6 +221,95 @@ def test_dashboard_stats(api_ctx):
     assert body["stats"]["by_quadrant"]["1"] == 1
     assert body["stats"]["by_quadrant"]["2"] == 1
     assert len(body["trend"]) == 14
+
+
+def test_schedule_overview_and_calendar_endpoints(api_ctx):
+    client = api_ctx["client"]
+    token = register_and_login(client, username="planner")
+    headers = auth_headers(token)
+
+    payloads = [
+        {
+            "title": "Today plan",
+            "description": "",
+            "category": "工作",
+            "quadrant": 1,
+            "due_at": "2026-03-30T09:00",
+            "recurrence_rule": "none",
+        },
+        {
+            "title": "Weekly sync",
+            "description": "",
+            "category": "学习",
+            "quadrant": 2,
+            "due_at": "2026-03-29T08:30",
+            "recurrence_rule": "daily",
+        },
+        {
+            "title": "Someday",
+            "description": "",
+            "category": "生活",
+            "quadrant": 3,
+            "due_at": "",
+            "recurrence_rule": "none",
+        },
+    ]
+    for payload in payloads:
+        resp = client.post("/api/tasks", headers=headers, json=payload)
+        assert resp.status_code == 200
+
+    overview = client.get("/api/schedule/overview", headers=headers)
+    assert overview.status_code == 200
+    today_titles = [item["title"] for item in overview.json()["today"]]
+    assert "Today plan" in today_titles
+    assert "Weekly sync" in today_titles
+    assert "Someday" not in today_titles
+
+    calendar = client.get("/api/schedule/calendar?start_date=2026-03-30&days=3", headers=headers)
+    assert calendar.status_code == 200
+    body = calendar.json()
+    assert body["start_date"] == "2026-03-30"
+    assert "2026-03-30" in body["by_date"]
+
+
+def test_task_export_and_import_csv(api_ctx):
+    client = api_ctx["client"]
+    token = register_and_login(client, username="backup_user")
+    headers = auth_headers(token)
+
+    create_resp = client.post(
+        "/api/tasks",
+        headers=headers,
+        json={
+            "title": "Backup Task",
+            "description": "for csv export",
+            "category": "工作",
+            "quadrant": 1,
+            "due_at": "2026-04-12T09:15",
+            "recurrence_rule": "weekly",
+        },
+    )
+    assert create_resp.status_code == 200
+
+    export_resp = client.get("/api/tasks/export", headers=headers)
+    assert export_resp.status_code == 200
+    assert "text/csv" in export_resp.headers["content-type"]
+    csv_text = export_resp.text
+    assert "Backup Task" in csv_text
+    assert "recurrence_rule" in csv_text
+
+    import_resp = client.post(
+        "/api/tasks/import",
+        headers=headers,
+        json={"csv_text": csv_text},
+    )
+    assert import_resp.status_code == 200
+    assert import_resp.json()["imported"] >= 1
+
+    all_resp = client.get("/api/tasks?status=all", headers=headers)
+    assert all_resp.status_code == 200
+    titles = [item["title"] for item in all_resp.json()["items"]]
+    assert titles.count("Backup Task") >= 2
 
 
 def test_login_ttl_respects_remember_me(api_ctx):

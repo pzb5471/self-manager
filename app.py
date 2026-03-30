@@ -157,6 +157,51 @@ def build_trend_data(tasks: list[dict], days: int = 14) -> list[dict]:
     return series
 
 
+def format_due_for_input(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%dT%H:%M")
+    except ValueError:
+        return None
+
+
+def render_schedule_page(service: TaskService, user_id: int) -> None:
+    st.title("日程概览")
+    overview = service.get_schedule_overview(user_id)
+    calendar = service.get_calendar_view(user_id, days=14)
+
+    col_today, col_week = st.columns(2)
+    with col_today:
+        st.subheader("今日任务")
+        if overview["today"]:
+            for item in overview["today"]:
+                st.markdown(f"**{item['title']}**")
+                st.caption(f"{item['occurrence_at']} | {item['due_text']} | {item['recurrence_rule']}")
+        else:
+            st.info("今天没有已安排任务。")
+
+    with col_week:
+        st.subheader("本周任务")
+        if overview["week"]:
+            for item in overview["week"]:
+                st.markdown(f"**{item['title']}**")
+                st.caption(f"{item['occurrence_at']} | {item['due_text']} | {item['recurrence_rule']}")
+        else:
+            st.info("本周没有已安排任务。")
+
+    st.subheader("未来14天日历")
+    if not calendar["items"]:
+        st.info("暂无带截止时间的任务。")
+        return
+
+    for day, items in calendar["by_date"].items():
+        with st.container(border=True):
+            st.markdown(f"**{day}**")
+            for item in items:
+                st.write(f"{item['occurrence_at'][11:16]}  {item['title']}  {item['due_text']}")
+
+
 def render_dashboard_page(service: TaskService, user_id: int) -> None:
     st.title("任务统计首页")
 
@@ -298,6 +343,7 @@ def render_quadrant_page(service: TaskService, user_id: int) -> None:
                 st.caption(f"{task['category']} | {quadrant_label(task['quadrant'])}")
                 if task["description"]:
                     st.write(task["description"])
+                st.caption(f"截止: {task['due_at'] or '未设置'} | {task['due_text']} | 重复: {task['recurrence_rule']}")
                 st.caption(f"创建: {task['created_at']}  更新: {task['updated_at']}")
             with action_col:
                 if st.button("编辑", key=f"edit_{task['id']}", use_container_width=True):
@@ -327,6 +373,7 @@ def render_task_editor_page(service: TaskService, user_id: int) -> None:
     with st.form("task_form"):
         title = st.text_input("任务标题", value=edit_task["title"] if edit_task else "")
         description = st.text_area("任务描述", value=edit_task["description"] if edit_task else "")
+        due_at = st.text_input("截止日期时间", value=format_due_for_input(edit_task["due_at"]) if edit_task else "", placeholder="YYYY-MM-DDTHH:MM")
 
         c1, c2 = st.columns(2)
         with c1:
@@ -336,6 +383,15 @@ def render_task_editor_page(service: TaskService, user_id: int) -> None:
             default_quadrant = edit_task["quadrant"] if edit_task else 1
             quadrant = st.selectbox("四象限", quadrant_options, index=quadrant_options.index(default_quadrant))
             st.caption(quadrant_label(quadrant))
+
+        recurrence_options = ["none", "daily", "weekly", "monthly"]
+        default_recurrence = edit_task["recurrence_rule"] if edit_task else "none"
+        recurrence_rule = st.selectbox(
+            "重复日程",
+            recurrence_options,
+            index=recurrence_options.index(default_recurrence),
+            format_func=lambda item: {"none": "不重复", "daily": "每天", "weekly": "每周", "monthly": "每月"}[item],
+        )
 
         b1, b2 = st.columns(2)
         with b1:
@@ -354,6 +410,8 @@ def render_task_editor_page(service: TaskService, user_id: int) -> None:
                     description=description,
                     category=category,
                     quadrant=quadrant,
+                    due_at=due_at,
+                    recurrence_rule=recurrence_rule,
                 )
                 st.success("任务更新成功")
             else:
@@ -363,6 +421,8 @@ def render_task_editor_page(service: TaskService, user_id: int) -> None:
                     description=description,
                     category=category,
                     quadrant=quadrant,
+                    due_at=due_at,
+                    recurrence_rule=recurrence_rule,
                 )
                 st.success("任务添加成功")
 
@@ -404,7 +464,7 @@ if st.sidebar.button("退出登录", use_container_width=True):
     do_logout(service)
     st.rerun()
 
-selected_page = st.sidebar.radio("导航", ["首页统计", "四象限任务", "添加任务"])
+selected_page = st.sidebar.radio("导航", ["首页统计", "四象限任务", "添加任务", "日程概览"])
 if st.session_state.page != selected_page:
     st.session_state.page = selected_page
 
@@ -412,5 +472,7 @@ if st.session_state.page == "首页统计":
     render_dashboard_page(service, user_id)
 elif st.session_state.page == "四象限任务":
     render_quadrant_page(service, user_id)
+elif st.session_state.page == "日程概览":
+    render_schedule_page(service, user_id)
 else:
     render_task_editor_page(service, user_id)

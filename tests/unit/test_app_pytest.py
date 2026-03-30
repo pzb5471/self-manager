@@ -4,6 +4,7 @@ import hashlib
 import sqlite3
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -64,6 +65,7 @@ def test_database_file_and_schema_created(service_ctx):
         "idx_tasks_user_id",
         "idx_tasks_user_completed",
         "idx_tasks_category_id",
+        "idx_tasks_due_at",
         "idx_categories_user_name",
         "idx_auth_tokens_token",
         "idx_auth_tokens_token_hash",
@@ -156,6 +158,27 @@ def test_add_task_and_get_by_id(service_ctx):
     assert loaded["user_id"] == user_a_id
 
 
+def test_task_due_at_and_recurrence_fields(service_ctx):
+    service = service_ctx["service"]
+    user_a_id = service_ctx["user_a_id"]
+    categories = service_ctx["categories"]
+
+    created = service.add_task(
+        user_id=user_a_id,
+        title="Submit report",
+        description="with deadline",
+        category=categories[0],
+        quadrant=1,
+        due_at="2026-04-02T09:30",
+        recurrence_rule="weekly",
+    )
+
+    assert created["due_at"] == "2026-04-02 09:30:00"
+    assert created["recurrence_rule"] == "weekly"
+    assert created["due_state"] in {"upcoming", "overdue"}
+    assert created["due_text"]
+
+
 def test_user_isolation_between_tasks(service_ctx):
     service = service_ctx["service"]
     user_a_id = service_ctx["user_a_id"]
@@ -190,6 +213,10 @@ def test_validation_errors(service_ctx):
         service.add_task(user_a_id, "Valid title", "", categories[0], 9)
     with pytest.raises(ValueError):
         service.add_task(0, "Valid title", "", categories[0], 1)
+    with pytest.raises(ValueError):
+        service.add_task(user_a_id, "Valid title", "", categories[0], 1, due_at="bad-date")
+    with pytest.raises(ValueError):
+        service.add_task(user_a_id, "Valid title", "", categories[0], 1, recurrence_rule="yearly")
 
 
 def test_update_task_success(service_ctx):
@@ -205,6 +232,8 @@ def test_update_task_success(service_ctx):
         description="Updated desc",
         category=categories[2],
         quadrant=4,
+        due_at="2026-04-08 18:00",
+        recurrence_rule="daily",
     )
 
     assert updated is True
@@ -213,6 +242,23 @@ def test_update_task_success(service_ctx):
     assert latest["description"] == "Updated desc"
     assert latest["category"] == categories[2]
     assert latest["quadrant"] == 4
+    assert latest["due_at"] == "2026-04-08 18:00:00"
+    assert latest["recurrence_rule"] == "daily"
+
+
+def test_update_task_can_clear_due_at(service_ctx):
+    service = service_ctx["service"]
+    user_a_id = service_ctx["user_a_id"]
+    categories = service_ctx["categories"]
+
+    task = service.add_task(user_a_id, "Clear due", "", categories[0], 1, due_at="2026-04-05 12:00")
+    updated = service.update_task(task["id"], user_a_id, due_at="", recurrence_rule="none")
+
+    assert updated is True
+    latest = service.get_task_by_id(task["id"], user_a_id)
+    assert latest["due_at"] is None
+    assert latest["due_state"] == "none"
+    assert latest["recurrence_rule"] == "none"
 
 
 def test_update_task_returns_false_when_not_exists_or_not_owner(service_ctx):
@@ -318,6 +364,38 @@ def test_statistics(service_ctx):
     assert stats["by_category"][categories[1]] == 2
     assert stats["by_quadrant"][1] == 1
     assert stats["by_quadrant"][2] == 2
+
+
+def test_schedule_overview_and_calendar_ignore_empty_due_at(service_ctx):
+    service = service_ctx["service"]
+    user_a_id = service_ctx["user_a_id"]
+    categories = service_ctx["categories"]
+
+    service.add_task(user_a_id, "No due", "", categories[0], 1)
+    service.add_task(user_a_id, "Today once", "", categories[0], 1, due_at="2026-03-30 10:00")
+    service.add_task(
+        user_a_id,
+        "Daily standup",
+        "",
+        categories[1],
+        2,
+        due_at="2026-03-29 09:00",
+        recurrence_rule="daily",
+    )
+
+    overview = service.get_schedule_overview(user_a_id, now=datetime(2026, 3, 30, 8, 0))
+    today_titles = [item["title"] for item in overview["today"]]
+    week_titles = [item["title"] for item in overview["week"]]
+
+    assert "No due" not in today_titles
+    assert "Today once" in today_titles
+    assert "Daily standup" in today_titles
+    assert "Daily standup" in week_titles
+
+    calendar = service.get_calendar_view(user_a_id, start_date="2026-03-30", days=3)
+    assert calendar["start_date"] == "2026-03-30"
+    assert "2026-03-30" in calendar["by_date"]
+    assert all(item["title"] != "No due" for item in calendar["items"])
 
 
 def test_sql_injection_is_blocked(service_ctx):

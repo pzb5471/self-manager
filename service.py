@@ -7,6 +7,8 @@ import hmac
 import os
 import secrets
 import sqlite3
+import csv
+import io
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -138,6 +140,8 @@ class TaskService:
                     category TEXT NOT NULL,
                     quadrant INTEGER NOT NULL CHECK(quadrant BETWEEN 1 AND 4),
                     completed INTEGER NOT NULL DEFAULT 0,
+                    due_at TEXT,
+                    recurrence_rule TEXT NOT NULL DEFAULT 'none',
                     created_at TEXT NOT NULL DEFAULT (datetime('now')),
                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                     FOREIGN KEY (user_id) REFERENCES users(id),
@@ -156,6 +160,12 @@ class TaskService:
             if "completed" not in task_columns:
                 logger.warning("检测到旧版 tasks 表结构，准备补充 completed 字段")
                 cursor.execute("ALTER TABLE tasks ADD COLUMN completed INTEGER NOT NULL DEFAULT 0")
+            if "due_at" not in task_columns:
+                logger.warning("检测到旧版 tasks 表结构，准备补充 due_at 字段")
+                cursor.execute("ALTER TABLE tasks ADD COLUMN due_at TEXT")
+            if "recurrence_rule" not in task_columns:
+                logger.warning("检测到旧版 tasks 表结构，准备补充 recurrence_rule 字段")
+                cursor.execute("ALTER TABLE tasks ADD COLUMN recurrence_rule TEXT NOT NULL DEFAULT 'none'")
 
             token_columns = [row["name"] for row in cursor.execute("PRAGMA table_info(auth_tokens)").fetchall()]
             if "token_hash" not in token_columns:
@@ -181,6 +191,7 @@ class TaskService:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_created ON tasks(user_id, created_at DESC)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_completed ON tasks(user_id, completed)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_category_id ON tasks(category_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_due_at ON tasks(due_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_categories_user_id ON categories(user_id)")
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_user_name ON categories(user_id, name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON auth_tokens(token)")
@@ -283,6 +294,8 @@ class TaskService:
                 COALESCE(c.color, '#94A3B8') AS category_color,
                 t.quadrant,
                 t.completed,
+                t.due_at,
+                t.recurrence_rule,
                 t.created_at,
                 t.updated_at
             FROM tasks t
@@ -593,12 +606,16 @@ class TaskService:
         category: str = "工作",
         quadrant: int = 1,
         completed: bool = False,
+        due_at: Optional[str] = None,
+        recurrence_rule: str = "none",
     ) -> Dict:
         uid = self._validate_user_id(user_id)
         title_trimmed = self._validate_title(title)
         category_name, category_id = self._resolve_category_for_user(uid, category)
         quadrant_checked = self._validate_quadrant(quadrant)
         completed_value = self._bool_to_db(completed)
+        due_at_value = self._normalize_due_at(due_at)
+        recurrence_value = self._validate_recurrence_rule(recurrence_rule)
         logger.info("准备新增任务: user_id={}, title={}", uid, title_trimmed)
 
         conn = self._get_connection()
@@ -606,8 +623,10 @@ class TaskService:
         try:
             cursor.execute(
                 """
-                INSERT INTO tasks (user_id, category_id, title, description, category, quadrant, completed)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks (
+                    user_id, category_id, title, description, category, quadrant, completed, due_at, recurrence_rule
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     uid,
@@ -617,6 +636,8 @@ class TaskService:
                     category_name,
                     quadrant_checked,
                     completed_value,
+                    due_at_value,
+                    recurrence_value,
                 ),
             )
             conn.commit()
@@ -643,6 +664,8 @@ class TaskService:
         category: Optional[str] = None,
         quadrant: Optional[int] = None,
         completed: Optional[bool] = None,
+        due_at: Optional[str] = None,
+        recurrence_rule: Optional[str] = None,
     ) -> bool:
         uid = self._validate_user_id(user_id)
         tid = self._validate_positive_int(task_id, "任务ID无效")
@@ -668,6 +691,12 @@ class TaskService:
         if completed is not None:
             updates.append("completed = ?")
             params.append(self._bool_to_db(completed))
+        if due_at is not None:
+            updates.append("due_at = ?")
+            params.append(self._normalize_due_at(due_at))
+        if recurrence_rule is not None:
+            updates.append("recurrence_rule = ?")
+            params.append(self._validate_recurrence_rule(recurrence_rule))
 
         updates.append("updated_at = datetime('now')")
 
@@ -928,6 +957,57 @@ class TaskService:
             "by_quadrant": quadrant_stats,
         }
 
+    def get_schedule_overview(self, user_id: int, now: Optional[datetime] = None) -> Dict[str, List[Dict]]:
+        uid = self._validate_user_id(user_id)
+        current = now or datetime.utcnow()
+        start = datetime.combine(current.date(), datetime.min.time())
+        end = start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+
+        tasks = self.get_all_tasks(uid, status=self.STATUS_PENDING)
+        today_items: List[Dict] = []
+        week_items: List[Dict] = []
+        today_key = current.strftime("%Y-%m-%d")
+
+        for task in tasks:
+            occurrences = self._expand_task_occurrences(task, start, end)
+            for item in occurrences:
+                if item["occurrence_date"] == today_key:
+                    today_items.append(item)
+                week_items.append(item)
+
+        today_items.sort(key=lambda item: item["occurrence_at"])
+        week_items.sort(key=lambda item: item["occurrence_at"])
+        return {"today": today_items, "week": week_items}
+
+    def get_calendar_view(self, user_id: int, start_date: Optional[str] = None, days: int = 35) -> Dict:
+        uid = self._validate_user_id(user_id)
+        days_checked = max(1, min(int(days), 90))
+        start_dt = (
+            datetime.strptime(start_date, "%Y-%m-%d")
+            if start_date
+            else datetime.combine(datetime.utcnow().date(), datetime.min.time())
+        )
+        end_dt = start_dt + timedelta(days=days_checked, seconds=-1)
+
+        tasks = self.get_all_tasks(uid, status=self.STATUS_PENDING)
+        items: List[Dict] = []
+        grouped: Dict[str, List[Dict]] = {}
+        for task in tasks:
+            for item in self._expand_task_occurrences(task, start_dt, end_dt):
+                items.append(item)
+                grouped.setdefault(item["occurrence_date"], []).append(item)
+
+        items.sort(key=lambda item: item["occurrence_at"])
+        for key in grouped:
+            grouped[key].sort(key=lambda item: item["occurrence_at"])
+
+        return {
+            "start_date": start_dt.strftime("%Y-%m-%d"),
+            "days": days_checked,
+            "items": items,
+            "by_date": grouped,
+        }
+
     def get_tasks_grouped_by_quadrant(self, user_id: int, status: str = STATUS_ALL) -> Dict[int, List[Dict]]:
         grouped = {1: [], 2: [], 3: [], 4: []}
         for task in self.get_all_tasks(user_id, status=status):
@@ -951,6 +1031,106 @@ class TaskService:
             logger.warning("已清空用户全部任务: user_id={}, count={}", uid, cursor.rowcount)
         except sqlite3.Error:
             logger.exception("清空任务失败: user_id={}", uid)
+            raise
+        finally:
+            conn.close()
+
+    def export_tasks_csv(self, user_id: int) -> str:
+        uid = self._validate_user_id(user_id)
+        tasks = self.get_all_tasks(uid, status=self.STATUS_ALL)
+        output = io.StringIO()
+        writer = csv.DictWriter(
+            output,
+            fieldnames=[
+                "title",
+                "description",
+                "category",
+                "quadrant",
+                "completed",
+                "due_at",
+                "recurrence_rule",
+                "created_at",
+                "updated_at",
+            ],
+        )
+        writer.writeheader()
+        for task in tasks:
+            writer.writerow(
+                {
+                    "title": task["title"],
+                    "description": task["description"],
+                    "category": task["category"],
+                    "quadrant": task["quadrant"],
+                    "completed": 1 if task["completed"] else 0,
+                    "due_at": task["due_at"] or "",
+                    "recurrence_rule": task["recurrence_rule"],
+                    "created_at": task["created_at"],
+                    "updated_at": task["updated_at"],
+                }
+            )
+        return "\ufeff" + output.getvalue()
+
+    def import_tasks_csv(self, user_id: int, csv_text: str) -> Dict[str, int]:
+        uid = self._validate_user_id(user_id)
+        raw = (csv_text or "").lstrip("\ufeff").strip()
+        if not raw:
+            raise ValueError("导入内容不能为空")
+
+        reader = csv.DictReader(io.StringIO(raw))
+        required = {"title", "description", "category", "quadrant", "completed", "due_at", "recurrence_rule"}
+        headers = set(reader.fieldnames or [])
+        if not required.issubset(headers):
+            raise ValueError("CSV 缺少必要列")
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        imported = 0
+        skipped = 0
+        try:
+            self._seed_default_categories(cursor, uid)
+            for row in reader:
+                if not any((value or "").strip() for value in row.values()):
+                    skipped += 1
+                    continue
+                title = self._validate_title(row.get("title", ""))
+                description = (row.get("description") or "").strip()
+                category_name = self._validate_category_name(row.get("category", ""))
+                quadrant = self._validate_quadrant(int((row.get("quadrant") or "").strip() or 0))
+                completed_raw = (row.get("completed") or "0").strip().lower()
+                completed = completed_raw in {"1", "true", "yes", "y"}
+                due_at = self._normalize_due_at(row.get("due_at"))
+                recurrence_rule = self._validate_recurrence_rule(row.get("recurrence_rule") or "none")
+                created_at = self._normalize_datetime_or_now(row.get("created_at"))
+                updated_at = self._normalize_datetime_or_now(row.get("updated_at"), fallback=created_at)
+                category_id = self._ensure_category_exists(cursor, uid, category_name)
+
+                cursor.execute(
+                    """
+                    INSERT INTO tasks (
+                        user_id, category_id, title, description, category, quadrant, completed,
+                        due_at, recurrence_rule, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        uid,
+                        category_id,
+                        title,
+                        description,
+                        category_name,
+                        quadrant,
+                        self._bool_to_db(completed),
+                        due_at,
+                        recurrence_rule,
+                        created_at,
+                        updated_at,
+                    ),
+                )
+                imported += 1
+            conn.commit()
+            return {"imported": imported, "skipped": skipped}
+        except (sqlite3.Error, ValueError):
+            conn.rollback()
             raise
         finally:
             conn.close()
@@ -1016,6 +1196,128 @@ class TaskService:
         status_checked = (status or self.STATUS_PENDING).strip().lower()
         return self._status_to_completed(status_checked)
 
+    @staticmethod
+    def _parse_due_at(value: Optional[str]) -> Optional[datetime]:
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        normalized = raw.replace("T", " ")
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(normalized, fmt)
+            except ValueError:
+                continue
+        return None
+
+    def _normalize_due_at(self, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        parsed = self._parse_due_at(raw)
+        if parsed is None:
+            raise ValueError("截止日期时间格式无效")
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _normalize_datetime_or_now(self, value: Optional[str], fallback: Optional[str] = None) -> str:
+        raw = (value or "").strip()
+        if not raw:
+            return fallback or self._now_str()
+        parsed = self._parse_due_at(raw)
+        if parsed is None:
+            raise ValueError("CSV 中存在无效时间格式")
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _validate_recurrence_rule(value: str) -> str:
+        rule = (value or "none").strip().lower()
+        if rule not in {"none", "daily", "weekly", "monthly"}:
+            raise ValueError("重复日程必须是 none/daily/weekly/monthly 之一")
+        return rule
+
+    @staticmethod
+    def _format_delta_label(prefix: str, delta: timedelta) -> str:
+        total_minutes = max(1, int(delta.total_seconds() // 60))
+        days, remainder = divmod(total_minutes, 60 * 24)
+        hours, minutes = divmod(remainder, 60)
+        parts: List[str] = []
+        if days:
+            parts.append(f"{days}天")
+        if hours:
+            parts.append(f"{hours}小时")
+        if minutes or not parts:
+            parts.append(f"{minutes}分钟")
+        return prefix + "".join(parts[:2])
+
+    @classmethod
+    def _build_due_status(cls, due_at: Optional[str], completed: bool) -> Dict[str, Optional[object]]:
+        if not due_at:
+            return {"due_at": None, "due_state": "none", "due_text": "未设置截止时间", "due_minutes": None}
+
+        due_dt = cls._parse_due_at(due_at)
+        if due_dt is None:
+            return {"due_at": due_at, "due_state": "invalid", "due_text": "截止时间无效", "due_minutes": None}
+
+        now = datetime.utcnow()
+        delta = due_dt - now
+        due_minutes = int(delta.total_seconds() // 60)
+        if completed:
+            state = "completed"
+            text = f"截止于 {due_dt.strftime('%Y-%m-%d %H:%M')}"
+        elif delta.total_seconds() < 0:
+            state = "overdue"
+            text = cls._format_delta_label("已逾期", now - due_dt)
+        else:
+            state = "upcoming"
+            text = cls._format_delta_label("剩余", delta)
+
+        return {
+            "due_at": due_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            "due_state": state,
+            "due_text": text,
+            "due_minutes": due_minutes,
+        }
+
+    @staticmethod
+    def _task_due_sort_key(task: Dict) -> tuple[int, str, int]:
+        return (0 if task.get("due_at") else 1, task.get("due_at") or "", int(task["id"]))
+
+    def _expand_task_occurrences(self, task: Dict, start: datetime, end: datetime) -> List[Dict]:
+        due_dt = self._parse_due_at(task.get("due_at"))
+        if due_dt is None:
+            return []
+
+        rule = task.get("recurrence_rule") or "none"
+        occurrences: List[Dict] = []
+        current = due_dt
+        occurrence_index = 0
+        while current <= end:
+            if current >= start:
+                item = dict(task)
+                item["occurrence_at"] = current.strftime("%Y-%m-%d %H:%M:%S")
+                item["occurrence_date"] = current.strftime("%Y-%m-%d")
+                item["occurrence_index"] = occurrence_index
+                occurrences.append(item)
+            if rule == "none":
+                break
+            if rule == "daily":
+                current += timedelta(days=1)
+            elif rule == "weekly":
+                current += timedelta(days=7)
+            else:
+                month = current.month + 1
+                year = current.year
+                if month > 12:
+                    month = 1
+                    year += 1
+                next_day = min(current.day, 28)
+                current = current.replace(year=year, month=month, day=next_day)
+            occurrence_index += 1
+        return occurrences
+
     def _resolve_category_for_user(self, user_id: int, category: str) -> tuple[str, int]:
         category_name = self._validate_category_name(category)
         conn = self._get_connection()
@@ -1067,6 +1369,7 @@ class TaskService:
 
     @staticmethod
     def _row_to_task(row: sqlite3.Row) -> Dict:
+        due_info = TaskService._build_due_status(row["due_at"], bool(row["completed"]))
         return {
             "id": row["id"],
             "user_id": row["user_id"],
@@ -1077,6 +1380,11 @@ class TaskService:
             "category_color": row["category_color"],
             "quadrant": row["quadrant"],
             "completed": bool(row["completed"]),
+            "due_at": due_info["due_at"],
+            "due_state": due_info["due_state"],
+            "due_text": due_info["due_text"],
+            "due_minutes": due_info["due_minutes"],
+            "recurrence_rule": row["recurrence_rule"] or "none",
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
