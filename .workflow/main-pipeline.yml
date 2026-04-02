@@ -1,6 +1,6 @@
 version: '1.0'
-name: branch-build-package
-displayName: 分支云端打包
+name: main-build-release
+displayName: 主干云端打包
 stages:
   - stage:
     name: build_and_package
@@ -8,7 +8,7 @@ stages:
     steps:
       - step: build@python
         name: verify_and_package
-        displayName: 校验并生成构建物
+        displayName: 校验并生成发布包
         pythonVersion: '3.11'
         artifacts:
           - name: BUILD_ARTIFACT
@@ -26,12 +26,20 @@ stages:
         name: publish_general_artifacts
         displayName: 上传构建物
         dependArtifact: BUILD_ARTIFACT
-        artifactName: self-manager-branch-package
+        artifactName: self-manager-main-package
         dependsOn: verify_and_package
+  - stage:
+    name: release
+    displayName: 发布
+    steps:
+      - step: publish@release_artifacts
+        name: publish_release_artifacts
+        displayName: 发布
+        dependArtifact: self-manager-main-package
+        version: '1.0.0.0'
+        autoIncrement: true
 triggers:
   push:
     branches:
-      exclude:
-        - main
       include:
-        - .*
+        - main

@@ -1,0 +1,2 @@
+#!/bin/sh
+powershell -NoProfile -ExecutionPolicy Bypass -File .githooks/pre-commit.ps1
