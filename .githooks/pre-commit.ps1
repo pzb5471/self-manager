@@ -23,10 +23,26 @@ if (-not $stagedFiles) {
     exit 0
 }
 
+$pythonFiles = @($stagedFiles | Where-Object { $_ -match "\.py$" })
+
 Push-Location $repoRoot
 try {
-    & $pythonExe -m pre_commit run --config .pre-commit-config.yaml --hook-stage pre-commit --files @stagedFiles
-    exit $LASTEXITCODE
+    if ($pythonFiles.Count -eq 0) {
+        exit 0
+    }
+
+    & $pythonExe -m black --config black.toml @pythonFiles
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+
+    & $pythonExe -m ruff check --fix @pythonFiles
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+
+    git add -- @pythonFiles
+    exit 0
 }
 finally {
     Pop-Location

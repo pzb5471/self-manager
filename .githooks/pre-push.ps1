@@ -20,7 +20,7 @@ $pythonExe = Get-PythonCommand
 
 Push-Location $repoRoot
 try {
-    & $pythonExe -m pre_commit run --config .pre-commit-config.yaml --hook-stage pre-push --all-files
+    & $pythonExe -m pytest tests -q
     exit $LASTEXITCODE
 }
 finally {
