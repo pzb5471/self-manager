@@ -1,14 +1,14 @@
 version: '1.0'
-name: pr-quality-gate
-displayName: PR质量门禁
+name: main-quality-gate
+displayName: Main质量门禁
 stages:
   - stage:
     name: quality_gate
     displayName: 质量校验
     steps:
       - step: build@python
-        name: quality_check
-        displayName: Python质量检查
+        name: main_quality_check
+        displayName: Main分支质量检查
         pythonVersion: '3.11'
         commands:
           - python3 -m pip install --upgrade pip
@@ -18,7 +18,7 @@ stages:
           - python3 -m black --check . --config black.toml
           - python3 -m pytest tests -q
 triggers:
-  pr:
+  push:
     branches:
       include:
         - main
