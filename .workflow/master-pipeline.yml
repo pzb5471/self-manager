@@ -1,6 +1,6 @@
 version: '1.0'
-name: branch-pipeline
-displayName: BranchPipeline
+name: master-pipeline
+displayName: MasterPipeline
 stages:
   - stage: 
     name: compile
@@ -46,7 +46,5 @@ stages:
 triggers:
   push:
     branches:
-      exclude:
-        - master
       include:
-        - .*
+        - master

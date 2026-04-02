@@ -32,13 +32,9 @@ proguard/
 logs/
 __pycache__/
 .pytest_cache/
-.pre-commit-cache/
-.venv/
-venv/
 tests/.tmp/
 tests/integration/.tmp/
 *.db-journal
-productivity_manager.db
 
 # Android Studio Navigation editor temp files
 .navigation/
