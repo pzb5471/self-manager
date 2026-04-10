@@ -59,7 +59,7 @@
 ## 5. 测试现状
 
 - 测试目录：`tests/unit`
-- 测试文件数：`6`
+- 测试文件数：`15`
 - 覆盖范围：
   - 数据库初始化与索引
   - 注册/登录/鉴权/登出流程
@@ -78,12 +78,12 @@
 
 ## 7. 仓库快照
 
-- 生成时间（UTC）：`2026-04-02 14:13:24 UTC`
-- Git 跟踪文件数：`45`
-- 最近提交短哈希：`ef9337b`
-- 最近提交时间：`2026-04-02 22:13:18 +0800`
-- 最近提交摘要：`feat: 完成 4.3 pre-commit 与 Gitee Go 配置`
-- 最近提交完整哈希：`ef9337b0e56c624d119a33d4570d2aeb372b4e5f`
+- 生成时间（UTC）：`2026-04-10 06:57:41 UTC`
+- Git 跟踪文件数：`58`
+- 最近提交短哈希：`51e7430`
+- 最近提交时间：`2026-04-10 14:57:33 +0800`
+- 最近提交摘要：`feat: 完成 Coursework 5.1 质量门禁与效率功能`
+- 最近提交完整哈希：`51e74309ea827874835b3dc972f1faa13600da26`
 
 ## 8. Commit 后自动更新
 
@@ -93,19 +93,3 @@
   - 每次 `git commit` 完成后，hook 自动刷新 `PROJECT.md`
   - 因为是 `post-commit`，刷新发生在提交之后，通常会形成新的工作区改动
   - 若要将最新 `PROJECT.md` 纳入版本库，请在下一次提交中包含该文件
-
-## Incremental Update
-
-- 新增工位打卡与克制玩手机能力，包含成就系统
-- 新增番茄钟工作法能力，包含会话记录与统计接口
-- 新增测试文件
-  - `tests/unit/test_habit_service.py`
-  - `tests/unit/test_habit_api.py`
-  - `tests/unit/test_pomodoro_service.py`
-  - `tests/unit/test_pomodoro_api.py`
-  - `tests/unit/test_pomodoro_regression.py`
-  - `tests/integration/test_habit_integration.py`
-  - `tests/integration/test_pomodoro_integration.py`
-  - `tests/unit/test_quality_gate_config.py`
-  - `tests/integration/test_workflow_pipeline_config.py`
-- 当前全量基线：`77 passed`
