@@ -1,10 +1,12 @@
 [flake8]
 max-line-length = 100
 extend-ignore = E203, W503
+select = E1, E2, E3, E4, E7, E9, F63, F7, F82, W291, W293
 exclude =
     .git,
     .oscanner,
     .pre-commit-cache,
+    .pre-commit-cache-run-1,
     .pytest_cache,
     __pycache__,
     .venv,

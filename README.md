@@ -1,67 +1,59 @@
-# 个人效能管理系统（Self Manager）
+# Self Manager
 
-基于 `FastAPI + SQLite + H5` 的个人任务管理系统，支持多用户登录、任务优先级管理、日历与列表视图、CSV 数据备份恢复，以及完整的单元测试与集成测试。
+基于 `FastAPI + SQLite + H5` 的个人效能管理系统，支持多用户登录、任务四象限管理、日历视图、统计面板，以及 CSV 数据导入导出。
 
-## 1. 功能概览
+项目当前已接入统一开发质量门禁：
 
-### 1.1 用户与认证
+- `pre-commit`
+- `flake8`
+- `black`
+- `pytest`
+- Gitee Go `.workflow/` 流水线
+
+## 功能概览
+
+### 用户与认证
 
 - 用户注册、登录、退出登录
 - Bearer Token 鉴权
-- Token 服务端哈希存储
-- 支持“记住我”
+- 服务端保存 Token 哈希
+- 支持 `remember_me`
 - 多用户数据隔离
 
-### 1.2 任务管理
+### 任务管理
 
 - 新增、查询、编辑、删除任务
-- 支持任务标题、描述、分类、四象限优先级
-- 支持截止日期时间
-- 支持重复日程：`none / daily / weekly / monthly`
-- 支持完成 / 未完成切换
-- 支持剩余时间与逾期提醒
+- 支持标题、描述、分类、四象限优先级
+- 支持截止时间 `due_at`
+- 支持重复规则 `none / daily / weekly / monthly`
+- 支持完成状态切换
+- 支持按关键字、分类、象限、状态、排序查询
 
-### 1.3 视图与交互
-
-- 登录后默认进入“首页”工作台
-- 首页支持三种视图切换：
-  - 列表视图
-  - 四象限视图
-  - 日历视图
-- 列表视图包含：
-  - 今日任务
-  - 本周任务
-  - 全部任务
-- 日历视图支持点击日期直接新增任务
-- 新增 / 编辑任务使用弹窗表单
-- 删除任务带二次确认
-
-### 1.4 分类管理
+### 分类管理
 
 - 创建分类
 - 编辑分类
 - 删除分类
-- 分类颜色管理
-- 分类与任务关联，分类改名后会同步到关联任务
+- 支持分类颜色配置
+- 分类改名后自动同步到关联任务
 
-### 1.5 统计与概览
+### 日程与统计
 
-- 任务统计页
-- 总任务数、未完成数、已完成数
-- 分类分布
-- 优先级分布
-- 近 14 天任务新增趋势
+- 今日任务与本周任务总览
+- 日历视图
+- 任务总数、完成数、未完成数统计
+- 分类分布与象限分布统计
+- 最近 14 天任务趋势
 
-### 1.6 数据导入导出
+### 数据导入导出
 
-- 导出全部任务为 CSV 文件
-- CSV 可直接用 Excel 打开
-- 支持使用导出的 CSV 重新导入系统
-- 可作为任务数据备份与恢复方案
+- 导出全部任务为 CSV
+- 支持将 CSV 再导回系统
+- 导出文件可直接用于备份与迁移
 
-## 2. 技术栈
+## 技术栈
 
-- Python 3.11+
+- Python 3.11
 - FastAPI
 - SQLite
 - Vanilla JavaScript
@@ -69,96 +61,120 @@
 - loguru
 - pytest
 
-## 3. 项目结构
+## 项目结构
 
 ```text
 self-manager/
-├─ main.py                             # FastAPI 入口与接口定义
-├─ service.py                          # 业务逻辑、数据库访问、兼容迁移
-├─ logger_config.py                    # 日志配置
-├─ frontend/
-│  ├─ index.html                       # 前端页面结构
-│  ├─ styles.css                       # 前端样式
-│  └─ app.js                           # 前端交互逻辑
-├─ tests/
-│  ├─ unit/                            # 单元测试
-│  │  ├─ test_app_pytest.py
-│  │  ├─ test_app_unittest.py
-│  │  ├─ test_fastapi_pytest.py
-│  │  └─ test_regression_baseline.py
-│  └─ integration/                     # 集成测试
-│     ├─ test_task_integration.py
-│     └─ test_regression_workflow.py
-├─ features/
-│  ├─ 4.2.md                           # 测试用例库与回归测试记录
-│  ├─ 4.2-quick-regression.txt         # 快速回归日志
-│  └─ 4.2-full-regression.txt          # 完整回归日志
-├─ pytest.ini                          # pytest 标记配置
-├─ requirements.txt                    # 依赖清单
-├─ README.md
-└─ app.py                              # 历史 Streamlit 入口
+|-- main.py                         # FastAPI 应用入口与 API 定义
+|-- service.py                      # 核心业务逻辑与数据库访问
+|-- logger_config.py                # 日志配置
+|-- frontend/
+|   |-- index.html                  # 前端页面
+|   |-- styles.css                  # 前端样式
+|   `-- app.js                      # 前端交互逻辑
+|-- .workflow/
+|   |-- pr-pipeline.yml             # PR 质量门禁
+|   |-- branch-pipeline.yml         # 分支模板质量门禁
+|   `-- main-pipeline.yml           # main 主干质量门禁
+|-- tests/
+|   |-- unit/                       # 单元测试
+|   `-- integration/                # 集成测试
+|-- PRECOMMIT.md                    # 本地质量门禁说明
+|-- GITEE_GO.md                     # Gitee Go 启用说明
+|-- .pre-commit-config.yaml         # pre-commit 配置
+|-- .flake8                         # flake8 配置
+|-- black.toml                      # black 配置
+|-- pytest.ini                      # pytest 标记配置
+|-- requirements.txt                # 运行时依赖
+|-- requirements-dev.txt            # 开发与质量依赖
+`-- app.py                          # 历史 Streamlit 入口
 ```
 
-## 4. 快速开始
+## 快速开始
 
-### 4.1 安装依赖
+### 1. 安装依赖
 
-```bash
-pip install -r requirements.txt
+运行环境：
+
+- 推荐 Python `3.11`
+- Windows 下可直接使用本机 `py311` 环境
+
+安装运行依赖：
+
+```powershell
+python -m pip install -r requirements.txt
 ```
 
-### 4.2 启动服务
+如果要进行开发或执行质量检查，再安装开发依赖：
 
-```bash
+```powershell
+python -m pip install -r requirements-dev.txt
+```
+
+### 2. 启动服务
+
+```powershell
 uvicorn main:app --reload
 ```
 
-### 4.3 访问地址
+如果 `uvicorn` 不在 PATH 中：
 
-- 首页：`http://127.0.0.1:8000/`
-- OpenAPI 文档：`http://127.0.0.1:8000/docs`
+```powershell
+python -m uvicorn main:app --reload
+```
 
-## 5. 环境配置
+### 3. 访问地址
 
-支持通过环境变量指定数据库路径：
+- 首页: `http://127.0.0.1:8000/`
+- OpenAPI 文档: `http://127.0.0.1:8000/docs`
 
-- `SELF_MANAGER_DB_PATH`：数据库文件路径，默认 `productivity_manager.db`
+## 环境变量
+
+可通过环境变量指定数据库文件路径：
+
+- `SELF_MANAGER_DB_PATH`
 
 示例：
 
 ```powershell
-$env:SELF_MANAGER_DB_PATH = "./data/dev.db"
-uvicorn main:app --reload
+$env:SELF_MANAGER_DB_PATH = ".\\data\\dev.db"
+python -m uvicorn main:app --reload
 ```
 
-## 6. API 概览
+默认数据库文件为：
 
-### 6.1 认证接口
+```text
+productivity_manager.db
+```
 
-- `POST /api/auth/register`：注册
-- `POST /api/auth/login`：登录
-- `POST /api/auth/logout`：退出登录
-- `GET /api/auth/me`：获取当前用户
+## API 概览
 
-### 6.2 分类接口
+### 认证接口
 
-- `GET /api/meta/categories`：获取分类元数据
-- `GET /api/categories`：查询分类列表
-- `POST /api/categories`：创建分类
-- `PUT /api/categories/{category_id}`：编辑分类
-- `DELETE /api/categories/{category_id}`：删除分类
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
 
-### 6.3 任务接口
+### 分类接口
 
-- `GET /api/tasks`：查询任务
-- `POST /api/tasks`：新增任务
-- `PUT /api/tasks/{task_id}`：编辑任务
-- `DELETE /api/tasks/{task_id}`：删除任务
-- `PATCH /api/tasks/{task_id}/status`：切换完成状态
-- `GET /api/tasks/export`：导出任务 CSV
-- `POST /api/tasks/import`：导入任务 CSV
+- `GET /api/meta/categories`
+- `GET /api/categories`
+- `POST /api/categories`
+- `PUT /api/categories/{category_id}`
+- `DELETE /api/categories/{category_id}`
 
-支持参数：
+### 任务接口
+
+- `GET /api/tasks`
+- `POST /api/tasks`
+- `PUT /api/tasks/{task_id}`
+- `DELETE /api/tasks/{task_id}`
+- `PATCH /api/tasks/{task_id}/status`
+- `GET /api/tasks/export`
+- `POST /api/tasks/import`
+
+支持的查询参数：
 
 - `keyword`
 - `category`
@@ -166,112 +182,129 @@ uvicorn main:app --reload
 - `status`
 - `sort`
 
-### 6.4 日程接口
+### 日程接口
 
-- `GET /api/schedule/overview`：获取今日 / 本周任务概览
-- `GET /api/schedule/calendar`：获取日历视图数据
+- `GET /api/schedule/overview`
+- `GET /api/schedule/calendar`
 
-### 6.5 统计接口
+### 统计接口
 
-- `GET /api/stats/dashboard`：获取任务统计数据
+- `GET /api/stats/dashboard`
 
-## 7. 测试说明
+## 测试
 
-### 7.1 pytest 标记
-
-`pytest.ini` 已定义：
+`pytest.ini` 已定义两个测试标记：
 
 - `unit`
 - `integration`
 
-### 7.2 单元测试
+### 运行单元测试
 
-单元测试位于 `tests/unit/`，覆盖：
-
-- 任务 CRUD
-- 参数校验
-- 截止时间与重复日程
-- 统计、筛选、搜索、排序
-- CSV 导入导出
-- 鉴权与 token 处理
-
-运行命令：
-
-```bash
-pytest tests/unit/ -v
+```powershell
+python -m pytest tests/unit -v
 ```
 
-### 7.3 集成测试
+### 运行集成测试
 
-集成测试位于 `tests/integration/`，覆盖：
-
-- 完整任务生命周期
-- 分类与象限筛选流程
-- 日程概览与日历流程
-- CSV 备份导出与导入恢复
-- 回归基线工作流
-
-运行命令：
-
-```bash
-pytest tests/integration/ -v
+```powershell
+python -m pytest tests/integration -v
 ```
 
-### 7.4 完整回归测试
+### 运行全量回归
 
-```bash
-pytest tests/ -v
+```powershell
+python -m pytest tests -q
 ```
 
-### 7.5 回归测试记录
+当前已验证通过的测试基线：
 
-本项目已建立测试用例库与回归执行记录，见：
+- `77 passed`
 
-- [4.2.md](/d:/test/self-manager/features/4.2.md)
-- [4.2-quick-regression.txt](/d:/test/self-manager/features/4.2-quick-regression.txt)
-- [4.2-full-regression.txt](/d:/test/self-manager/features/4.2-full-regression.txt)
+### 新增功能测试清单
 
-## 8. 运行结果参考
+本轮新增功能已补齐对应测试，重点包括：
 
-当前回归基线：
+- 工位打卡与克制玩手机
+  - [test_habit_service.py](d:/test/self-manager/tests/unit/test_habit_service.py)
+  - [test_habit_api.py](d:/test/self-manager/tests/unit/test_habit_api.py)
+  - [test_habit_integration.py](d:/test/self-manager/tests/integration/test_habit_integration.py)
+- 番茄钟工作法
+  - [test_pomodoro_service.py](d:/test/self-manager/tests/unit/test_pomodoro_service.py)
+  - [test_pomodoro_api.py](d:/test/self-manager/tests/unit/test_pomodoro_api.py)
+  - [test_pomodoro_regression.py](d:/test/self-manager/tests/unit/test_pomodoro_regression.py)
+  - [test_pomodoro_integration.py](d:/test/self-manager/tests/integration/test_pomodoro_integration.py)
+- 工程质量配置
+  - [test_quality_gate_config.py](d:/test/self-manager/tests/unit/test_quality_gate_config.py)
+  - [test_workflow_pipeline_config.py](d:/test/self-manager/tests/integration/test_workflow_pipeline_config.py)
 
-- 快速回归：`45 passed`
-- 完整回归：`54 passed`
+## 本地质量门禁
 
-说明：
+仓库已集成以下本地质量检查：
 
-- 测试运行中可能出现 `.pytest_cache` 权限 warning
-- 该 warning 不影响测试通过，可忽略
+- `flake8`：重点检查乱缩进、多余空格、行尾空白、基础语法错误
+- `black`：统一 Python 代码格式
+- `pytest`：在 `pre-push` 阶段执行自动化测试
 
-## 9. 常见问题
+安装并启用：
 
-- `uvicorn` 命令不可用
-  - 使用 `python -m uvicorn main:app --reload`
-- Excel 打开 CSV 中文乱码
-  - 当前导出文件已带 UTF-8 BOM，通常可直接正常打开
-- 导入 CSV 失败
-  - 请确认 CSV 至少包含这些列：
-    - `title`
-    - `description`
-    - `category`
-    - `quadrant`
-    - `completed`
-    - `due_at`
-    - `recurrence_rule`
-- 分类删除失败
-  - 如果分类下仍有关联任务，系统会阻止删除
+```powershell
+python -m pip install -r requirements-dev.txt
+pre-commit install --hook-type pre-commit --hook-type pre-push
+pre-commit run --all-files
+```
 
-## 10. 开发说明
+详细说明见 [PRECOMMIT.md](d:/test/self-manager/PRECOMMIT.md)。
+
+## Gitee Go 流水线
+
+仓库 `.workflow/` 目录下已提供：
+
+- PR 质量门禁
+- 分支模板质量门禁
+- `main` 主干质量门禁
+
+统一使用 Python `3.11`，并执行：
+
+- `flake8`
+- `black --check`
+- `pytest tests -q`
+
+详细启用方式见 [GITEE_GO.md](d:/test/self-manager/GITEE_GO.md)。
+
+## 常见问题
+
+### 1. `pytest` 或 `uvicorn` 命令不可用
+
+优先使用：
+
+```powershell
+python -m pytest tests -q
+python -m uvicorn main:app --reload
+```
+
+### 2. CSV 中文乱码
+
+导出 CSV 时已带 UTF-8 BOM，通常可直接使用 Excel 打开。
+
+### 3. 删除分类失败
+
+如果分类下仍有关联任务，系统会阻止删除，需要先删除或迁移相关任务。
+
+### 4. 本地出现 `.pytest_cache` 权限 warning
+
+这类 warning 通常不影响测试通过，可忽略；如需避免，可在可写目录或虚拟环境下执行测试。
+
+## 开发说明
 
 - 核心业务逻辑集中在 `service.py`
-- Web API 在 `main.py`
-- 当前主前端为 `frontend/` 下的 H5 页面
-- `app.py` 为历史 Streamlit 入口，已做基础同步，但主开发路径建议以 FastAPI + H5 为准
+- Web API 定义位于 `main.py`
+- 前端页面位于 `frontend/`
+- `app.py` 是历史 Streamlit 入口，当前主开发路径以 FastAPI + H5 为准
 
-新增功能建议遵循以下流程：
+建议新增功能时遵循以下顺序：
 
-1. 先补数据库字段或迁移逻辑
-2. 再补 service 层与 API
-3. 再补前端交互
-4. 最后补单元测试与集成测试
-5. 执行快速回归与完整回归
+1. 先补数据结构或数据库逻辑
+2. 再补 service 层
+3. 再补 API 层
+4. 再补前端交互
+5. 最后补齐单元测试、集成测试和质量配置测试

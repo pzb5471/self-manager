@@ -1,5 +1,6 @@
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -248,6 +249,9 @@ def test_schedule_overview_and_calendar(integration_ctx):
     client = integration_ctx["client"]
     headers = integration_ctx["headers"]
     categories = integration_ctx["categories"]
+    today = datetime.utcnow().date()
+    today_str = today.isoformat()
+    yesterday_str = (today - timedelta(days=1)).isoformat()
 
     payloads = [
         {
@@ -255,7 +259,7 @@ def test_schedule_overview_and_calendar(integration_ctx):
             "description": "",
             "category": categories["alpha"],
             "quadrant": 1,
-            "due_at": "2026-03-30T11:00",
+            "due_at": f"{today_str}T11:00",
             "recurrence_rule": "none",
         },
         {
@@ -263,7 +267,7 @@ def test_schedule_overview_and_calendar(integration_ctx):
             "description": "",
             "category": categories["beta"],
             "quadrant": 2,
-            "due_at": "2026-03-29T08:00",
+            "due_at": f"{yesterday_str}T08:00",
             "recurrence_rule": "daily",
         },
         {
@@ -287,11 +291,11 @@ def test_schedule_overview_and_calendar(integration_ctx):
     assert "Recurring" in today_titles
     assert "No deadline" not in today_titles
 
-    calendar = client.get("/api/schedule/calendar?start_date=2026-03-30&days=7", headers=headers)
+    calendar = client.get(f"/api/schedule/calendar?start_date={today_str}&days=7", headers=headers)
     assert calendar.status_code == 200
     body = calendar.json()
-    assert body["start_date"] == "2026-03-30"
-    assert "2026-03-30" in body["by_date"]
+    assert body["start_date"] == today_str
+    assert today_str in body["by_date"]
     assert all(item["title"] != "No deadline" for item in body["items"])
 
 

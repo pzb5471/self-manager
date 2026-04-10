@@ -1,7 +1,76 @@
-# PROJECT
+#!/usr/bin/env python3
+"""生成中文 PROJECT.md 项目摘要。"""
+
+from __future__ import annotations
+
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+OUTPUT = ROOT / "PROJECT.md"
+
+
+def run_git(args: list[str]) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except Exception:
+        return ""
+    return (result.stdout or "").strip()
+
+
+def latest_commit() -> dict[str, str]:
+    raw = run_git(["log", "-1", "--pretty=format:%H|%h|%ad|%s", "--date=iso"])
+    if not raw:
+        return {
+            "full_hash": "N/A",
+            "short_hash": "N/A",
+            "date": "N/A",
+            "subject": "N/A",
+        }
+
+    full_hash, short_hash, date, subject = raw.split("|", 3)
+    return {
+        "full_hash": full_hash,
+        "short_hash": short_hash,
+        "date": date,
+        "subject": subject,
+    }
+
+
+def tracked_file_count() -> int:
+    raw = run_git(["ls-files"])
+    if not raw:
+        return 0
+    return len([line for line in raw.splitlines() if line.strip()])
+
+
+def test_file_count() -> int:
+    tests_dir = ROOT / "tests"
+    if not tests_dir.exists():
+        return 0
+    return len(list(tests_dir.rglob("test_*.py")))
+
+
+def build_markdown() -> str:
+    commit = latest_commit()
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    files = tracked_file_count()
+    tests = test_file_count()
+
+    return f"""# PROJECT
 
 > 本文件用于每次对话的项目初始上下文。  
-> 手动生成：`D:\\panzubin\\download\\Conda\\envs\\py311\\python.exe scripts/update_project_md.py`  
+> 手动生成：`D:\\\\panzubin\\\\download\\\\Conda\\\\envs\\\\py311\\\\python.exe scripts/update_project_md.py`  
 > 自动更新：`.githooks/post-commit`
 
 ## 1. 项目概述
@@ -59,7 +128,7 @@
 ## 5. 测试现状
 
 - 测试目录：`tests/unit`
-- 测试文件数：`6`
+- 测试文件数：`{tests}`
 - 覆盖范围：
   - 数据库初始化与索引
   - 注册/登录/鉴权/登出流程
@@ -78,12 +147,12 @@
 
 ## 7. 仓库快照
 
-- 生成时间（UTC）：`2026-04-02 14:13:24 UTC`
-- Git 跟踪文件数：`45`
-- 最近提交短哈希：`ef9337b`
-- 最近提交时间：`2026-04-02 22:13:18 +0800`
-- 最近提交摘要：`feat: 完成 4.3 pre-commit 与 Gitee Go 配置`
-- 最近提交完整哈希：`ef9337b0e56c624d119a33d4570d2aeb372b4e5f`
+- 生成时间（UTC）：`{generated_at}`
+- Git 跟踪文件数：`{files}`
+- 最近提交短哈希：`{commit["short_hash"]}`
+- 最近提交时间：`{commit["date"]}`
+- 最近提交摘要：`{commit["subject"]}`
+- 最近提交完整哈希：`{commit["full_hash"]}`
 
 ## 8. Commit 后自动更新
 
@@ -93,19 +162,13 @@
   - 每次 `git commit` 完成后，hook 自动刷新 `PROJECT.md`
   - 因为是 `post-commit`，刷新发生在提交之后，通常会形成新的工作区改动
   - 若要将最新 `PROJECT.md` 纳入版本库，请在下一次提交中包含该文件
+"""
 
-## Incremental Update
 
-- 新增工位打卡与克制玩手机能力，包含成就系统
-- 新增番茄钟工作法能力，包含会话记录与统计接口
-- 新增测试文件
-  - `tests/unit/test_habit_service.py`
-  - `tests/unit/test_habit_api.py`
-  - `tests/unit/test_pomodoro_service.py`
-  - `tests/unit/test_pomodoro_api.py`
-  - `tests/unit/test_pomodoro_regression.py`
-  - `tests/integration/test_habit_integration.py`
-  - `tests/integration/test_pomodoro_integration.py`
-  - `tests/unit/test_quality_gate_config.py`
-  - `tests/integration/test_workflow_pipeline_config.py`
-- 当前全量基线：`77 passed`
+def main() -> None:
+    OUTPUT.write_text(build_markdown(), encoding="utf-8")
+    print(f"Updated: {OUTPUT}")
+
+
+if __name__ == "__main__":
+    main()

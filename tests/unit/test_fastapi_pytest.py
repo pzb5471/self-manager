@@ -1,5 +1,5 @@
 ﻿import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -227,6 +227,9 @@ def test_schedule_overview_and_calendar_endpoints(api_ctx):
     client = api_ctx["client"]
     token = register_and_login(client, username="planner")
     headers = auth_headers(token)
+    today = datetime.utcnow().date()
+    today_str = today.isoformat()
+    yesterday_str = (today - timedelta(days=1)).isoformat()
 
     payloads = [
         {
@@ -234,7 +237,7 @@ def test_schedule_overview_and_calendar_endpoints(api_ctx):
             "description": "",
             "category": "工作",
             "quadrant": 1,
-            "due_at": "2026-03-30T09:00",
+            "due_at": f"{today_str}T09:00",
             "recurrence_rule": "none",
         },
         {
@@ -242,7 +245,7 @@ def test_schedule_overview_and_calendar_endpoints(api_ctx):
             "description": "",
             "category": "学习",
             "quadrant": 2,
-            "due_at": "2026-03-29T08:30",
+            "due_at": f"{yesterday_str}T08:30",
             "recurrence_rule": "daily",
         },
         {
@@ -265,11 +268,11 @@ def test_schedule_overview_and_calendar_endpoints(api_ctx):
     assert "Weekly sync" in today_titles
     assert "Someday" not in today_titles
 
-    calendar = client.get("/api/schedule/calendar?start_date=2026-03-30&days=3", headers=headers)
+    calendar = client.get(f"/api/schedule/calendar?start_date={today_str}&days=3", headers=headers)
     assert calendar.status_code == 200
     body = calendar.json()
-    assert body["start_date"] == "2026-03-30"
-    assert "2026-03-30" in body["by_date"]
+    assert body["start_date"] == today_str
+    assert today_str in body["by_date"]
 
 
 def test_task_export_and_import_csv(api_ctx):

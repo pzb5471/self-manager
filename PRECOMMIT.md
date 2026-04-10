@@ -1,30 +1,38 @@
-# Pre-commit 使用说明
+# pre-commit 本地质量门禁说明
 
-本仓库使用 `pre-commit` 作为本地质量门禁统一入口，Python 环境固定为 3.11。
+本仓库统一使用 `pre-commit` 作为本地质量门禁入口，默认 Python 版本为 `3.11`。
 
-## 已接入工具
+## 已启用的检查
 
+- `check-yaml`、`check-merge-conflict`、`end-of-file-fixer`、`trailing-whitespace`
 - `flake8`
-  - 代码风格检查
-  - 严格检查乱缩进、多余空格等问题
+  - 重点检查乱缩进、语法错误、多余空格、行尾空白等基础代码风格问题
 - `black`
-  - 自动格式化 Python 代码排版
+  - 自动统一 Python 代码排版
 - `pytest`
-  - 在 `pre-push` 阶段执行自动化测试
+  - 在 `pre-push` 阶段执行 `pytest tests -q`，阻止未通过测试的代码被推送
 
-## 安装与启用
+## 本地安装
 
 ```powershell
 python -m pip install -r requirements-dev.txt
 pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
+## 常用命令
+
+```powershell
 pre-commit run --all-files
+pre-commit run flake8 --all-files
+pre-commit run black --all-files
+pre-commit run pytest-quality-gate --hook-stage pre-push
 ```
 
 ## 触发时机
 
 - `pre-commit`
-  - 运行通用文件检查
-  - 运行 `flake8`
-  - 运行 `black`
+  - 执行通用文件检查
+  - 执行 `flake8`
+  - 执行 `black`
 - `pre-push`
-  - 运行 `pytest tests -q`
+  - 执行 `pytest tests -q`

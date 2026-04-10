@@ -31,6 +31,8 @@ class TaskService:
     STATUS_ALL = "all"
     STATUS_PENDING = "pending"
     STATUS_COMPLETED = "completed"
+    CHECKIN_PERIODS = ("morning", "noon", "evening")
+    POMODORO_TYPES = ("work", "short_break", "long_break")
 
     def __init__(self, db_path: str = "productivity_manager.db"):
         raw_db_path = str(db_path)
@@ -150,6 +152,51 @@ class TaskService:
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workstation_checkins (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    checkin_date TEXT NOT NULL,
+                    period TEXT NOT NULL CHECK(period IN ('morning', 'noon', 'evening')),
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(user_id, checkin_date, period),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS phone_focus_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    duration_minutes INTEGER NOT NULL CHECK(duration_minutes > 0),
+                    note TEXT NOT NULL DEFAULT '',
+                    resisted_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    session_date TEXT NOT NULL,
+                    session_type TEXT NOT NULL CHECK(session_type IN ('work', 'short_break', 'long_break')),
+                    duration_minutes INTEGER NOT NULL CHECK(duration_minutes > 0),
+                    completed INTEGER NOT NULL DEFAULT 0,
+                    note TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+
             task_columns = [row["name"] for row in cursor.execute("PRAGMA table_info(tasks)").fetchall()]
             if "user_id" not in task_columns:
                 logger.warning("检测到旧版 tasks 表结构，准备补充 user_id 字段")
@@ -197,6 +244,26 @@ class TaskService:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON auth_tokens(token)")
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_tokens_token_hash ON auth_tokens(token_hash)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id)")
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_workstation_checkins_unique "
+                "ON workstation_checkins(user_id, checkin_date, period)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workstation_checkins_user_date "
+                "ON workstation_checkins(user_id, checkin_date DESC)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_phone_focus_user_time "
+                "ON phone_focus_records(user_id, resisted_at DESC)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pomodoro_sessions_user_date "
+                "ON pomodoro_sessions(user_id, session_date DESC, created_at DESC)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pomodoro_sessions_user_type "
+                "ON pomodoro_sessions(user_id, session_type)"
+            )
 
             conn.commit()
             logger.info("数据库初始化完成")
@@ -957,6 +1024,339 @@ class TaskService:
             "by_quadrant": quadrant_stats,
         }
 
+    def record_pomodoro_session(
+        self,
+        user_id: int,
+        session_type: str,
+        duration_minutes: int,
+        completed: bool = True,
+        session_date: Optional[str] = None,
+        note: str = "",
+    ) -> Dict:
+        uid = self._validate_user_id(user_id)
+        session_type_checked = self._validate_pomodoro_type(session_type)
+        duration_checked = self._validate_pomodoro_duration(duration_minutes)
+        date_checked = self._normalize_date_value(session_date)
+        note_checked = (note or "").strip()
+        if len(note_checked) > 120:
+            raise ValueError("note must not exceed 120 characters")
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT INTO pomodoro_sessions (
+                    user_id, session_date, session_type, duration_minutes, completed, note
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (uid, date_checked, session_type_checked, duration_checked, self._bool_to_db(completed), note_checked),
+            )
+            conn.commit()
+            record_id = int(cursor.lastrowid)
+            cursor.execute(
+                """
+                SELECT id, user_id, session_date, session_type, duration_minutes, completed, note, created_at, updated_at
+                FROM pomodoro_sessions
+                WHERE id = ?
+                """,
+                (record_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_pomodoro_session(row)
+        finally:
+            conn.close()
+
+    def list_pomodoro_sessions(
+        self,
+        user_id: int,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        session_type: Optional[str] = None,
+        completed: Optional[bool] = None,
+        days: int = 7,
+    ) -> List[Dict]:
+        uid = self._validate_user_id(user_id)
+        end_day = datetime.strptime(self._normalize_date_value(end_date), "%Y-%m-%d").date()
+        if start_date:
+            start_day = datetime.strptime(self._normalize_date_value(start_date), "%Y-%m-%d").date()
+        else:
+            days_checked = max(1, min(int(days), 90))
+            start_day = end_day - timedelta(days=days_checked - 1)
+        if start_day > end_day:
+            raise ValueError("start_date must not be later than end_date")
+
+        params: List = [uid, start_day.isoformat(), end_day.isoformat()]
+        where_sql = "WHERE user_id = ? AND session_date BETWEEN ? AND ?"
+        if session_type:
+            where_sql += " AND session_type = ?"
+            params.append(self._validate_pomodoro_type(session_type))
+        if completed is not None:
+            where_sql += " AND completed = ?"
+            params.append(self._bool_to_db(completed))
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                f"""
+                SELECT id, user_id, session_date, session_type, duration_minutes, completed, note, created_at, updated_at
+                FROM pomodoro_sessions
+                {where_sql}
+                ORDER BY session_date DESC, created_at DESC, id DESC
+                """,
+                params,
+            )
+            return [self._row_to_pomodoro_session(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def get_pomodoro_stats(
+        self,
+        user_id: int,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        days: int = 7,
+    ) -> Dict:
+        uid = self._validate_user_id(user_id)
+        end_day = datetime.strptime(self._normalize_date_value(end_date), "%Y-%m-%d").date()
+        if start_date:
+            start_day = datetime.strptime(self._normalize_date_value(start_date), "%Y-%m-%d").date()
+        else:
+            days_checked = max(1, min(int(days), 90))
+            start_day = end_day - timedelta(days=days_checked - 1)
+        if start_day > end_day:
+            raise ValueError("start_date must not be later than end_date")
+
+        sessions = self.list_pomodoro_sessions(uid, start_day.isoformat(), end_day.isoformat(), days=days)
+        by_date: Dict[str, Dict[str, object]] = {}
+        for offset in range((end_day - start_day).days + 1):
+            current = start_day + timedelta(days=offset)
+            by_date[current.isoformat()] = self._empty_pomodoro_day()
+
+        totals = self._empty_pomodoro_day()
+        type_totals = {session_type: {"count": 0, "minutes": 0, "completed": 0} for session_type in self.POMODORO_TYPES}
+        for session in sessions:
+            day_bucket = by_date.setdefault(session["session_date"], self._empty_pomodoro_day())
+            self._accumulate_pomodoro_bucket(day_bucket, session)
+            self._accumulate_pomodoro_bucket(totals, session)
+
+            type_bucket = type_totals[session["session_type"]]
+            type_bucket["count"] += 1
+            type_bucket["minutes"] += int(session["duration_minutes"])
+            type_bucket["completed"] += 1 if session["completed"] else 0
+
+        focus_sessions = totals["work"]["completed_count"]
+        focus_minutes = totals["work"]["completed_minutes"]
+
+        return {
+            "range": {
+                "start_date": start_day.isoformat(),
+                "end_date": end_day.isoformat(),
+            },
+            "summary": {
+                "total_sessions": totals["total_count"],
+                "completed_sessions": totals["total_completed"],
+                "focus_sessions": focus_sessions,
+                "focus_minutes": focus_minutes,
+                "work_sessions": totals["work"]["count"],
+                "short_break_sessions": totals["short_break"]["count"],
+                "long_break_sessions": totals["long_break"]["count"],
+            },
+            "by_type": type_totals,
+            "by_date": by_date,
+            "items": sessions,
+        }
+
+    def record_workstation_checkin(
+        self,
+        user_id: int,
+        period: str,
+        checkin_date: Optional[str] = None,
+    ) -> Dict:
+        uid = self._validate_user_id(user_id)
+        period_checked = self._validate_checkin_period(period)
+        date_checked = self._normalize_date_value(checkin_date)
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT INTO workstation_checkins (user_id, checkin_date, period)
+                VALUES (?, ?, ?)
+                """,
+                (uid, date_checked, period_checked),
+            )
+            conn.commit()
+            record_id = int(cursor.lastrowid)
+            cursor.execute(
+                """
+                SELECT id, user_id, checkin_date, period, created_at
+                FROM workstation_checkins
+                WHERE id = ?
+                """,
+                (record_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_checkin(row)
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("该时段已完成打卡，请勿重复打卡") from exc
+        finally:
+            conn.close()
+
+    def list_workstation_checkins(
+        self,
+        user_id: int,
+        days: int = 7,
+        end_date: Optional[str] = None,
+    ) -> List[Dict]:
+        uid = self._validate_user_id(user_id)
+        days_checked = max(1, min(int(days), 90))
+        end_day = datetime.strptime(self._normalize_date_value(end_date), "%Y-%m-%d").date()
+        start_day = end_day - timedelta(days=days_checked - 1)
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id, user_id, checkin_date, period, created_at
+                FROM workstation_checkins
+                WHERE user_id = ?
+                  AND checkin_date BETWEEN ? AND ?
+                ORDER BY checkin_date DESC, created_at DESC, id DESC
+                """,
+                (uid, start_day.isoformat(), end_day.isoformat()),
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_checkin(row) for row in rows]
+        finally:
+            conn.close()
+
+    def record_phone_focus(
+        self,
+        user_id: int,
+        duration_minutes: int,
+        note: str = "",
+        resisted_at: Optional[str] = None,
+    ) -> Dict:
+        uid = self._validate_user_id(user_id)
+        duration_checked = self._validate_duration_minutes(duration_minutes)
+        resisted_at_checked = self._normalize_datetime_input(resisted_at)
+        note_checked = (note or "").strip()
+        if len(note_checked) > 120:
+            raise ValueError("备注不能超过120个字符")
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT INTO phone_focus_records (user_id, duration_minutes, note, resisted_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (uid, duration_checked, note_checked, resisted_at_checked),
+            )
+            conn.commit()
+            record_id = int(cursor.lastrowid)
+            cursor.execute(
+                """
+                SELECT id, user_id, duration_minutes, note, resisted_at, created_at
+                FROM phone_focus_records
+                WHERE id = ?
+                """,
+                (record_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_phone_focus(row)
+        finally:
+            conn.close()
+
+    def list_phone_focus_records(
+        self,
+        user_id: int,
+        days: int = 14,
+        end_date: Optional[str] = None,
+    ) -> List[Dict]:
+        uid = self._validate_user_id(user_id)
+        days_checked = max(1, min(int(days), 180))
+        end_day = datetime.strptime(self._normalize_date_value(end_date), "%Y-%m-%d").date()
+        start_dt = datetime.combine(end_day - timedelta(days=days_checked - 1), datetime.min.time())
+        end_dt = datetime.combine(end_day, datetime.max.time()).replace(microsecond=0)
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id, user_id, duration_minutes, note, resisted_at, created_at
+                FROM phone_focus_records
+                WHERE user_id = ?
+                  AND resisted_at BETWEEN ? AND ?
+                ORDER BY resisted_at DESC, id DESC
+                """,
+                (uid, start_dt.strftime("%Y-%m-%d %H:%M:%S"), end_dt.strftime("%Y-%m-%d %H:%M:%S")),
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_phone_focus(row) for row in rows]
+        finally:
+            conn.close()
+
+    def get_habit_dashboard(self, user_id: int, today: Optional[str] = None) -> Dict:
+        uid = self._validate_user_id(user_id)
+        today_value = self._normalize_date_value(today)
+        today_records = self.list_workstation_checkins(uid, days=1, end_date=today_value)
+        recent_checkins = self.list_workstation_checkins(uid, days=14, end_date=today_value)
+        recent_phone_focus = self.list_phone_focus_records(uid, days=14, end_date=today_value)
+
+        all_checkins = self._list_all_checkins(uid)
+        all_phone_focus = self._list_all_phone_focus(uid)
+
+        by_date: Dict[str, set[str]] = {}
+        for item in all_checkins:
+            by_date.setdefault(item["checkin_date"], set()).add(item["period"])
+
+        sorted_dates = sorted(by_date.keys())
+        checkin_days = len(sorted_dates)
+        full_day_dates = sorted(date for date, periods in by_date.items() if len(periods) == len(self.CHECKIN_PERIODS))
+        full_day_count = len(full_day_dates)
+        full_day_streak = self._compute_consecutive_day_streak(full_day_dates, today_value)
+        total_checkins = sum(len(periods) for periods in by_date.values())
+        total_phone_minutes = sum(item["duration_minutes"] for item in all_phone_focus)
+        total_phone_sessions = len(all_phone_focus)
+
+        achievements = self._build_habit_achievements(
+            today_value=today_value,
+            today_periods={item["period"] for item in today_records},
+            checkin_days=checkin_days,
+            full_day_count=full_day_count,
+            full_day_streak=full_day_streak,
+            total_phone_minutes=total_phone_minutes,
+            total_phone_sessions=total_phone_sessions,
+        )
+
+        return {
+            "today": {
+                "date": today_value,
+                "periods": {period: any(item["period"] == period for item in today_records) for period in self.CHECKIN_PERIODS},
+                "records": sorted(today_records, key=lambda item: self.CHECKIN_PERIODS.index(item["period"])),
+            },
+            "recent_checkins": recent_checkins,
+            "recent_phone_focus": recent_phone_focus,
+            "summary": {
+                "total_checkins": total_checkins,
+                "checkin_days": checkin_days,
+                "full_day_count": full_day_count,
+                "full_day_streak": full_day_streak,
+                "total_phone_minutes": total_phone_minutes,
+                "total_phone_sessions": total_phone_sessions,
+                "unlocked_achievements": sum(1 for item in achievements if item["unlocked"]),
+            },
+            "achievements": achievements,
+        }
+
     def get_schedule_overview(self, user_id: int, now: Optional[datetime] = None) -> Dict[str, List[Dict]]:
         uid = self._validate_user_id(user_id)
         current = now or datetime.utcnow()
@@ -1135,6 +1535,113 @@ class TaskService:
         finally:
             conn.close()
 
+    def _list_all_checkins(self, user_id: int) -> List[Dict]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id, user_id, checkin_date, period, created_at
+                FROM workstation_checkins
+                WHERE user_id = ?
+                ORDER BY checkin_date ASC, created_at ASC, id ASC
+                """,
+                (user_id,),
+            )
+            return [self._row_to_checkin(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def _list_all_phone_focus(self, user_id: int) -> List[Dict]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id, user_id, duration_minutes, note, resisted_at, created_at
+                FROM phone_focus_records
+                WHERE user_id = ?
+                ORDER BY resisted_at ASC, id ASC
+                """,
+                (user_id,),
+            )
+            return [self._row_to_phone_focus(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    @classmethod
+    def _compute_consecutive_day_streak(cls, dates: List[str], end_date: Optional[str] = None) -> int:
+        if not dates:
+            return 0
+        target = datetime.strptime(end_date or dates[-1], "%Y-%m-%d").date()
+        date_set = {datetime.strptime(value, "%Y-%m-%d").date() for value in dates}
+        streak = 0
+        current = target
+        while current in date_set:
+            streak += 1
+            current -= timedelta(days=1)
+        return streak
+
+    def _build_habit_achievements(
+        self,
+        *,
+        today_value: str,
+        today_periods: set[str],
+        checkin_days: int,
+        full_day_count: int,
+        full_day_streak: int,
+        total_phone_minutes: int,
+        total_phone_sessions: int,
+    ) -> List[Dict]:
+        defs = [
+            ("first_checkin", "工位晨启", "首次完成工位打卡", checkin_days, 1),
+            ("full_day", "三段全勤", "单日完成早中晚三段打卡", full_day_count, 1),
+            ("steady_worker", "稳定到岗", "累计完成3天工位打卡", checkin_days, 3),
+            ("phone_hour", "克机一小时", "累计克制玩手机60分钟", total_phone_minutes, 60),
+            ("phone_guard", "手机克星", "累计完成5次克制玩手机记录", total_phone_sessions, 5),
+            ("discipline_master", "自律达人", "连续3天全勤打卡", full_day_streak, 3),
+        ]
+        return [
+            {
+                "key": key,
+                "title": title,
+                "description": description,
+                "progress": min(progress, target),
+                "target": target,
+                "unlocked": progress >= target,
+                "today_unlocked": key == "full_day" and len(today_periods) == len(self.CHECKIN_PERIODS),
+                "today": today_value,
+            }
+            for key, title, description, progress, target in defs
+        ]
+
+    @staticmethod
+    def _empty_pomodoro_day() -> Dict[str, object]:
+        return {
+            "total_count": 0,
+            "total_completed": 0,
+            "focus_count": 0,
+            "focus_minutes": 0,
+            "work": {"count": 0, "completed_count": 0, "minutes": 0, "completed_minutes": 0},
+            "short_break": {"count": 0, "completed_count": 0, "minutes": 0, "completed_minutes": 0},
+            "long_break": {"count": 0, "completed_count": 0, "minutes": 0, "completed_minutes": 0},
+        }
+
+    @staticmethod
+    def _accumulate_pomodoro_bucket(bucket: Dict[str, object], session: Dict) -> None:
+        session_type = session["session_type"]
+        session_bucket = bucket[session_type]
+        session_bucket["count"] += 1
+        session_bucket["minutes"] += int(session["duration_minutes"])
+        if session["completed"]:
+            session_bucket["completed_count"] += 1
+            session_bucket["completed_minutes"] += int(session["duration_minutes"])
+            bucket["total_completed"] += 1
+            if session_type == "work":
+                bucket["focus_count"] += 1
+                bucket["focus_minutes"] += int(session["duration_minutes"])
+        bucket["total_count"] += 1
+
     def _validate_user_id(self, user_id: int) -> int:
         if not isinstance(user_id, int) or user_id <= 0:
             raise ValueError("用户未登录或用户ID无效")
@@ -1196,6 +1703,31 @@ class TaskService:
         status_checked = (status or self.STATUS_PENDING).strip().lower()
         return self._status_to_completed(status_checked)
 
+    @classmethod
+    def _validate_checkin_period(cls, period: str) -> str:
+        checked = (period or "").strip().lower()
+        if checked not in cls.CHECKIN_PERIODS:
+            raise ValueError("打卡时段必须是 morning/noon/evening 之一")
+        return checked
+
+    @staticmethod
+    def _validate_duration_minutes(value: int) -> int:
+        if not isinstance(value, int) or value <= 0:
+            raise ValueError("克制玩手机时长必须是正整数分钟")
+        if value > 24 * 60:
+            raise ValueError("克制玩手机时长不能超过1440分钟")
+        return value
+
+    @staticmethod
+    def _normalize_date_value(value: Optional[str]) -> str:
+        raw = (value or "").strip()
+        if not raw:
+            return datetime.utcnow().strftime("%Y-%m-%d")
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError("日期格式无效，应为 YYYY-MM-DD") from exc
+
     @staticmethod
     def _parse_due_at(value: Optional[str]) -> Optional[datetime]:
         if value is None:
@@ -1230,6 +1762,29 @@ class TaskService:
         if parsed is None:
             raise ValueError("CSV 中存在无效时间格式")
         return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _normalize_datetime_input(self, value: Optional[str]) -> str:
+        if value is None or not str(value).strip():
+            return self._now_str()
+        parsed = self._parse_due_at(value)
+        if parsed is None:
+            raise ValueError("日期时间格式无效，应为 YYYY-MM-DD HH:MM[:SS]")
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+    @classmethod
+    def _validate_pomodoro_type(cls, session_type: str) -> str:
+        checked = (session_type or "").strip().lower()
+        if checked not in cls.POMODORO_TYPES:
+            raise ValueError("session_type must be work, short_break, or long_break")
+        return checked
+
+    @staticmethod
+    def _validate_pomodoro_duration(duration_minutes: int) -> int:
+        if not isinstance(duration_minutes, int) or duration_minutes <= 0:
+            raise ValueError("duration_minutes must be a positive integer")
+        if duration_minutes > 480:
+            raise ValueError("duration_minutes must not exceed 480")
+        return duration_minutes
 
     @staticmethod
     def _validate_recurrence_rule(value: str) -> str:
@@ -1365,6 +1920,41 @@ class TaskService:
             "name": row["name"],
             "color": row["color"],
             "created_at": row["created_at"],
+        }
+
+    @staticmethod
+    def _row_to_checkin(row: sqlite3.Row) -> Dict:
+        return {
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "checkin_date": row["checkin_date"],
+            "period": row["period"],
+            "created_at": row["created_at"],
+        }
+
+    @staticmethod
+    def _row_to_phone_focus(row: sqlite3.Row) -> Dict:
+        return {
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "duration_minutes": row["duration_minutes"],
+            "note": row["note"] or "",
+            "resisted_at": row["resisted_at"],
+            "created_at": row["created_at"],
+        }
+
+    @staticmethod
+    def _row_to_pomodoro_session(row: sqlite3.Row) -> Dict:
+        return {
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "session_date": row["session_date"],
+            "session_type": row["session_type"],
+            "duration_minutes": row["duration_minutes"],
+            "completed": bool(row["completed"]),
+            "note": row["note"] or "",
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
         }
 
     @staticmethod

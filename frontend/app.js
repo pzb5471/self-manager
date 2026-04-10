@@ -18,6 +18,22 @@ const state = {
   },
   tasks: [],
   dashboard: null,
+  habitDashboard: null,
+  pomodoro: {
+    mode: "work",
+    running: false,
+    completedWorkSessions: Number(localStorage.getItem("sm_pomodoro_completed") || 0),
+    elapsedSeconds: 0,
+    startedAt: 0,
+    lastTickAt: 0,
+    intervalId: null,
+    settings: {
+      workMinutes: Number(localStorage.getItem("sm_pomodoro_work") || 25),
+      shortBreakMinutes: Number(localStorage.getItem("sm_pomodoro_short") || 5),
+      longBreakMinutes: Number(localStorage.getItem("sm_pomodoro_long") || 15),
+      longBreakEvery: Number(localStorage.getItem("sm_pomodoro_cycle") || 4),
+    },
+  },
 };
 
 const recurrenceLabels = {
@@ -40,6 +56,8 @@ const el = {
   appView: document.getElementById("app-view"),
   userLabel: document.getElementById("user-label"),
   pageHome: document.getElementById("page-home"),
+  pagePomodoro: document.getElementById("page-pomodoro"),
+  pageHabits: document.getElementById("page-habits"),
   pageCategories: document.getElementById("page-categories"),
   pageStats: document.getElementById("page-stats"),
   modalRoot: document.getElementById("modal-root"),
@@ -105,6 +123,143 @@ function addMonthsSafe(date, months) {
   const month = ((totalMonth % 12) + 12) % 12;
   const day = Math.min(next.getDate(), 28);
   return new Date(year, month, day, next.getHours(), next.getMinutes(), next.getSeconds());
+}
+
+function clampPomodoroMinutes(value, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.min(180, Math.max(1, Math.round(num)));
+}
+
+function getPomodoroModeLabel(mode) {
+  return ({ work: "工作", shortBreak: "短休息", longBreak: "长休息" }[mode] || mode);
+}
+
+function getPomodoroModeTone(mode) {
+  return ({ work: "work", shortBreak: "rest", longBreak: "long" }[mode] || "rest");
+}
+
+function getPomodoroDurationSeconds(mode) {
+  const settings = state.pomodoro.settings;
+  const minutes = {
+    work: settings.workMinutes,
+    shortBreak: settings.shortBreakMinutes,
+    longBreak: settings.longBreakMinutes,
+  }[mode] || settings.workMinutes;
+  return clampPomodoroMinutes(minutes, 25) * 60;
+}
+
+function savePomodoroSettings() {
+  localStorage.setItem("sm_pomodoro_work", String(state.pomodoro.settings.workMinutes));
+  localStorage.setItem("sm_pomodoro_short", String(state.pomodoro.settings.shortBreakMinutes));
+  localStorage.setItem("sm_pomodoro_long", String(state.pomodoro.settings.longBreakMinutes));
+  localStorage.setItem("sm_pomodoro_cycle", String(state.pomodoro.settings.longBreakEvery));
+}
+
+function savePomodoroCompletedCount() {
+  localStorage.setItem("sm_pomodoro_completed", String(state.pomodoro.completedWorkSessions));
+}
+
+function formatPomodoroSeconds(seconds) {
+  const safe = Math.max(0, Math.ceil(seconds));
+  const mins = String(Math.floor(safe / 60)).padStart(2, "0");
+  const secs = String(safe % 60).padStart(2, "0");
+  return `${mins}:${secs}`;
+}
+
+function getPomodoroRoundIndex() {
+  const cycle = Math.max(1, state.pomodoro.settings.longBreakEvery);
+  return (state.pomodoro.completedWorkSessions % cycle) + 1;
+}
+
+function getPomodoroTotalSeconds() {
+  return getPomodoroDurationSeconds(state.pomodoro.mode);
+}
+
+function getPomodoroElapsedSeconds() {
+  if (!state.pomodoro.running) return state.pomodoro.elapsedSeconds;
+  return Math.floor((Date.now() - state.pomodoro.startedAt) / 1000);
+}
+
+function getPomodoroRemainingSeconds() {
+  return Math.max(0, getPomodoroTotalSeconds() - getPomodoroElapsedSeconds());
+}
+
+function updatePomodoroProgress() {
+  const remaining = getPomodoroRemainingSeconds();
+  const total = getPomodoroTotalSeconds();
+  const elapsed = Math.max(0, Math.min(total, total - remaining));
+  state.pomodoro.elapsedSeconds = elapsed;
+  return { remaining, total, elapsed };
+}
+
+function stopPomodoroTimer() {
+  if (state.pomodoro.intervalId) {
+    clearInterval(state.pomodoro.intervalId);
+    state.pomodoro.intervalId = null;
+  }
+  state.pomodoro.running = false;
+}
+
+function startPomodoroTimer() {
+  if (state.pomodoro.running) return;
+  state.pomodoro.running = true;
+  state.pomodoro.startedAt = Date.now() - state.pomodoro.elapsedSeconds * 1000;
+  state.pomodoro.lastTickAt = Date.now();
+  state.pomodoro.intervalId = setInterval(() => {
+    const remaining = getPomodoroRemainingSeconds();
+    if (remaining <= 0) {
+      completePomodoroPhase();
+      return;
+    }
+    state.pomodoro.lastTickAt = Date.now();
+    if (state.page === "pomodoro") renderPomodoro();
+  }, 1000);
+}
+
+function pausePomodoroTimer() {
+  if (!state.pomodoro.running) return;
+  state.pomodoro.elapsedSeconds = getPomodoroElapsedSeconds();
+  stopPomodoroTimer();
+}
+
+function setPomodoroMode(mode, options = {}) {
+  pausePomodoroTimer();
+  state.pomodoro.mode = mode;
+  state.pomodoro.elapsedSeconds = options.resetElapsed === false ? state.pomodoro.elapsedSeconds : 0;
+  state.pomodoro.startedAt = Date.now() - state.pomodoro.elapsedSeconds * 1000;
+  if (options.autoStart) startPomodoroTimer();
+  renderPomodoro();
+}
+
+function resetPomodoroTimer(options = {}) {
+  const preserveMode = Boolean(options.preserveMode);
+  pausePomodoroTimer();
+  if (!preserveMode) state.pomodoro.mode = "work";
+  state.pomodoro.elapsedSeconds = 0;
+  state.pomodoro.startedAt = Date.now();
+  renderPomodoro();
+}
+
+function completePomodoroPhase() {
+  const finishedMode = state.pomodoro.mode;
+  pausePomodoroTimer();
+  state.pomodoro.elapsedSeconds = getPomodoroTotalSeconds();
+
+  if (finishedMode === "work") {
+    state.pomodoro.completedWorkSessions += 1;
+    savePomodoroCompletedCount();
+    const nextMode = state.pomodoro.completedWorkSessions % Math.max(1, state.pomodoro.settings.longBreakEvery) === 0 ? "longBreak" : "shortBreak";
+    state.pomodoro.mode = nextMode;
+    state.pomodoro.elapsedSeconds = 0;
+    showToast(`完成第 ${state.pomodoro.completedWorkSessions} 个工作番茄，进入${getPomodoroModeLabel(nextMode)}`);
+  } else {
+    state.pomodoro.mode = "work";
+    state.pomodoro.elapsedSeconds = 0;
+    showToast(`休息结束，准备进入${getPomodoroModeLabel("work")}阶段`);
+  }
+
+  if (state.page === "pomodoro") renderPomodoro();
 }
 
 function computeNextOccurrence(task, rangeStart, rangeEnd) {
@@ -701,6 +856,10 @@ function renderTrendSVG(points) {
     </svg>`;
 }
 
+function checkinPeriodText(period) {
+  return ({ morning: "早打卡", noon: "中打卡", evening: "晚打卡" }[period] || period);
+}
+
 async function renderStats() {
   const dashboard = state.dashboard || (await api("/api/stats/dashboard"));
   const stats = dashboard.stats;
@@ -731,6 +890,244 @@ async function renderStats() {
     } catch (error) {
       showToast(error.message);
     }
+  });
+}
+
+async function renderHabits() {
+  const dashboard = await api("/api/habits/dashboard");
+  state.habitDashboard = dashboard;
+  const today = dashboard.today || { periods: {}, date: "" };
+  const summary = dashboard.summary || {};
+  const recentCheckins = dashboard.recent_checkins || [];
+  const recentPhoneFocus = dashboard.recent_phone_focus || [];
+  const achievements = dashboard.achievements || [];
+
+  el.pageHabits.innerHTML = `
+    <section class="hero-card">
+      <div>
+        <p class="eyebrow">Habits</p>
+        <h1>工位打卡与克机记录</h1>
+        <p class="hero-copy">用早中晚三段工位打卡记录在岗节奏，再把每次克制玩手机的专注时段沉淀成成就。</p>
+      </div>
+      <div class="hero-metrics">
+        <div><span>今日日期</span><strong>${escapeHtml(today.date || "--")}</strong></div>
+        <div><span>连续全勤</span><strong>${summary.full_day_streak || 0} 天</strong></div>
+      </div>
+    </section>
+
+    <div class="metrics" style="margin-top:16px;">
+      <div class="metric"><div class="label">累计打卡</div><div class="value">${summary.total_checkins || 0}</div></div>
+      <div class="metric"><div class="label">打卡天数</div><div class="value">${summary.checkin_days || 0}</div></div>
+      <div class="metric"><div class="label">克机分钟</div><div class="value">${summary.total_phone_minutes || 0}</div></div>
+      <div class="metric"><div class="label">解锁成就</div><div class="value">${summary.unlocked_achievements || 0}</div></div>
+    </div>
+
+    <div class="grid-2" style="margin-top:16px;">
+      <section class="panel">
+        <h3>今日工位打卡</h3>
+        <div class="habit-checkins">
+          ${["morning", "noon", "evening"].map((period) => `
+            <button
+              class="habit-checkin-btn ${today.periods?.[period] ? "is-done" : ""}"
+              data-checkin-period="${period}"
+              ${today.periods?.[period] ? "disabled" : ""}
+            >
+              <span>${checkinPeriodText(period)}</span>
+              <strong>${today.periods?.[period] ? "已完成" : "点击打卡"}</strong>
+            </button>
+          `).join("")}
+        </div>
+        <div class="task-list" style="margin-top:14px;">
+          ${(today.records || []).length
+            ? today.records.map((item) => `<div class="habit-row"><strong>${checkinPeriodText(item.period)}</strong><span>${escapeHtml(item.created_at)}</span></div>`).join("")
+            : '<div class="empty-state">今天还没有工位打卡记录。</div>'}
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>新增克机记录</h3>
+        <form id="phone-focus-form" class="form">
+          <label>克制时长（分钟）
+            <input id="phone-focus-minutes" type="number" min="1" max="1440" value="30" required />
+          </label>
+          <label>备注
+            <textarea id="phone-focus-note" placeholder="例如：午后 30 分钟不刷短视频，专心写周报"></textarea>
+          </label>
+          <div class="modal-actions">
+            <button class="btn primary" type="submit">记录一次克机</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div class="grid-2" style="margin-top:16px;">
+      <section class="panel">
+        <h3>最近打卡记录</h3>
+        <div class="habit-list">
+          ${recentCheckins.length
+            ? recentCheckins.map((item) => `<div class="habit-row"><strong>${escapeHtml(item.checkin_date)} ${checkinPeriodText(item.period)}</strong><span>${escapeHtml(item.created_at)}</span></div>`).join("")
+            : '<div class="empty-state">暂无打卡记录。</div>'}
+        </div>
+      </section>
+      <section class="panel">
+        <h3>最近克机记录</h3>
+        <div class="habit-list">
+          ${recentPhoneFocus.length
+            ? recentPhoneFocus.map((item) => `<div class="habit-row"><strong>${item.duration_minutes} 分钟</strong><span>${escapeHtml(item.note || item.resisted_at)}</span></div>`).join("")
+            : '<div class="empty-state">暂无克机记录。</div>'}
+        </div>
+      </section>
+    </div>
+
+    <section class="panel" style="margin-top:16px;">
+      <h3>成就系统</h3>
+      <div class="achievement-grid">
+        ${achievements.map((item) => `
+          <article class="achievement-card ${item.unlocked ? "is-unlocked" : ""}">
+            <div class="achievement-head">
+              <strong>${escapeHtml(item.title)}</strong>
+              <span>${item.unlocked ? "已解锁" : `${item.progress}/${item.target}`}</span>
+            </div>
+            <p>${escapeHtml(item.description)}</p>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+
+  el.pageHabits.querySelectorAll("[data-checkin-period]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      await api("/api/habits/checkins", {
+        method: "POST",
+        body: JSON.stringify({ period: node.dataset.checkinPeriod }),
+      });
+      showToast("打卡成功");
+      await renderHabits();
+    });
+  });
+
+  document.getElementById("phone-focus-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await api("/api/habits/phone-focus", {
+      method: "POST",
+      body: JSON.stringify({
+        duration_minutes: Number(document.getElementById("phone-focus-minutes").value),
+        note: document.getElementById("phone-focus-note").value,
+      }),
+    });
+    showToast("克机记录已保存");
+    await renderHabits();
+  });
+}
+
+function renderPomodoro() {
+  const progress = updatePomodoroProgress();
+  const percent = Math.min(100, Math.round((progress.elapsed / Math.max(1, progress.total)) * 100));
+  const modeLabel = getPomodoroModeLabel(state.pomodoro.mode);
+  const tone = getPomodoroModeTone(state.pomodoro.mode);
+  const roundIndex = getPomodoroRoundIndex();
+  const totalRounds = Math.max(1, state.pomodoro.settings.longBreakEvery);
+  const sessionCount = state.pomodoro.completedWorkSessions;
+  const nextBreakLabel = sessionCount > 0 && sessionCount % totalRounds === 0 ? "长休息" : "短休息";
+
+  el.pagePomodoro.innerHTML = `
+    <section class="hero-card">
+      <div>
+        <p class="eyebrow">Focus</p>
+        <h1>番茄钟</h1>
+        <p class="hero-copy">工作、短休息、长休息三种节奏自由切换。完成一个工作番茄后会自动给出下一阶段与累计进度反馈。</p>
+      </div>
+      <div class="hero-metrics">
+        <div><span>当前阶段</span><strong>${modeLabel}</strong></div>
+        <div><span>已完成工作番茄</span><strong>${sessionCount}</strong></div>
+      </div>
+    </section>
+
+    <section class="panel pomodoro-layout">
+      <div class="pomodoro-ring ${tone}" style="--progress:${percent};">
+        <div class="pomodoro-ring-inner">
+          <span class="pomodoro-mode">${modeLabel}</span>
+          <strong class="pomodoro-time">${formatPomodoroSeconds(progress.remaining)}</strong>
+          <span class="pomodoro-meta">${state.pomodoro.running ? "运行中" : "已暂停"} · 第 ${roundIndex}/${totalRounds} 轮</span>
+        </div>
+      </div>
+
+      <div class="pomodoro-actions">
+        <button class="btn primary" id="pomodoro-toggle-btn">${state.pomodoro.running ? "暂停" : "开始"}</button>
+        <button class="btn ghost" id="pomodoro-reset-btn">重置</button>
+        <button class="btn ghost" data-pomodoro-mode="work">工作</button>
+        <button class="btn ghost" data-pomodoro-mode="shortBreak">短休息</button>
+        <button class="btn ghost" data-pomodoro-mode="longBreak">长休息</button>
+      </div>
+
+      <div class="pomodoro-summary">
+        <div class="pomodoro-stat"><span>本轮进度</span><strong>${percent}%</strong></div>
+        <div class="pomodoro-stat"><span>下一休息</span><strong>${nextBreakLabel}</strong></div>
+        <div class="pomodoro-stat"><span>剩余工作番茄</span><strong>${Math.max(0, totalRounds - (sessionCount % totalRounds))}</strong></div>
+      </div>
+    </section>
+
+    <div class="grid-2" style="margin-top:16px;">
+      <section class="panel">
+        <h3>时长配置</h3>
+        <form id="pomodoro-settings-form" class="form">
+          <div class="editor-grid">
+            <label>工作时长（分钟）
+              <input id="pomodoro-work" type="number" min="1" max="180" value="${state.pomodoro.settings.workMinutes}" />
+            </label>
+            <label>短休息（分钟）
+              <input id="pomodoro-short" type="number" min="1" max="60" value="${state.pomodoro.settings.shortBreakMinutes}" />
+            </label>
+          </div>
+          <div class="editor-grid">
+            <label>长休息（分钟）
+              <input id="pomodoro-long" type="number" min="1" max="120" value="${state.pomodoro.settings.longBreakMinutes}" />
+            </label>
+            <label>多少个工作番茄后进入长休息
+              <input id="pomodoro-cycle" type="number" min="2" max="12" value="${state.pomodoro.settings.longBreakEvery}" />
+            </label>
+          </div>
+          <div class="modal-actions">
+            <button class="btn primary" type="submit">保存配置</button>
+          </div>
+        </form>
+      </section>
+      <section class="panel">
+        <h3>累计反馈</h3>
+        <div class="habit-list">
+          <div class="habit-row"><strong>完成工作番茄</strong><span>${sessionCount}</span></div>
+          <div class="habit-row"><strong>当前阶段</strong><span>${modeLabel}</span></div>
+          <div class="habit-row"><strong>当前轮次</strong><span>${roundIndex}/${totalRounds}</span></div>
+        </div>
+      </section>
+    </div>
+  `;
+
+  document.getElementById("pomodoro-toggle-btn").addEventListener("click", () => {
+    if (state.pomodoro.running) pausePomodoroTimer();
+    else startPomodoroTimer();
+    renderPomodoro();
+  });
+
+  document.getElementById("pomodoro-reset-btn").addEventListener("click", () => {
+    resetPomodoroTimer({ preserveMode: true });
+  });
+
+  el.pagePomodoro.querySelectorAll("[data-pomodoro-mode]").forEach((node) => {
+    node.addEventListener("click", () => {
+      setPomodoroMode(node.dataset.pomodoroMode);
+    });
+  });
+
+  document.getElementById("pomodoro-settings-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    state.pomodoro.settings.workMinutes = clampPomodoroMinutes(document.getElementById("pomodoro-work").value, 25);
+    state.pomodoro.settings.shortBreakMinutes = clampPomodoroMinutes(document.getElementById("pomodoro-short").value, 5);
+    state.pomodoro.settings.longBreakMinutes = clampPomodoroMinutes(document.getElementById("pomodoro-long").value, 15);
+    state.pomodoro.settings.longBreakEvery = Math.max(2, Math.min(12, Math.round(Number(document.getElementById("pomodoro-cycle").value) || 4)));
+    savePomodoroSettings();
+    resetPomodoroTimer({ preserveMode: true });
+    showToast("番茄钟配置已保存");
   });
 }
 
@@ -808,6 +1205,8 @@ async function renderCategories() {
 
 async function rerenderCurrentPage() {
   if (state.page === "home") await renderHome();
+  else if (state.page === "pomodoro") await renderPomodoro();
+  else if (state.page === "habits") await renderHabits();
   else if (state.page === "categories") await renderCategories();
   else await renderStats();
 }
@@ -816,9 +1215,13 @@ async function showPage(page) {
   state.page = page;
   document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.page === page));
   el.pageHome.classList.toggle("hidden", page !== "home");
+  el.pagePomodoro.classList.toggle("hidden", page !== "pomodoro");
+  el.pageHabits.classList.toggle("hidden", page !== "habits");
   el.pageCategories.classList.toggle("hidden", page !== "categories");
   el.pageStats.classList.toggle("hidden", page !== "stats");
   if (page === "home") await renderHome();
+  else if (page === "pomodoro") await renderPomodoro();
+  else if (page === "habits") await renderHabits();
   else if (page === "categories") await renderCategories();
   else await renderStats();
 }
@@ -901,6 +1304,7 @@ function wireAppShell() {
     } catch (_) {
       // ignore
     }
+    stopPomodoroTimer();
     state.token = "";
     state.user = null;
     localStorage.removeItem("sm_token");

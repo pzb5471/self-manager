@@ -1,20 +1,24 @@
 default_install_hook_types:
   - pre-commit
   - pre-push
+
 default_language_version:
   python: python3.11
+
 exclude: |
   (?x)^(
+    \.git/|
     \.oscanner/|
     \.pre-commit-cache/|
+    \.pre-commit-cache-run-1/|
     \.pytest_cache/|
     __pycache__/|
     frontend/|
     logs/|
     productivity_manager\.db|
-    skills/.*\.zip|
-    tests/TEST2\.3\.PNG\.jpg
+    skills/.*\.zip
   )$
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -30,7 +34,6 @@ repos:
       - id: flake8
         args:
           - --config=.flake8
-        additional_dependencies: []
 
   - repo: https://github.com/psf/black
     rev: 25.9.0
@@ -49,11 +52,7 @@ repos:
         language: python
         language_version: python3.11
         additional_dependencies:
-          - fastapi
-          - httpx
-          - loguru
-          - pytest
-          - uvicorn
+          - -r requirements-dev.txt
         pass_filenames: false
         always_run: true
         stages:

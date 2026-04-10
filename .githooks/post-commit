@@ -1,0 +1,2 @@
+#!C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+./.githooks/post-commit.ps1

@@ -6,6 +6,7 @@ extend-exclude = '''
   /\.git
   | /\.oscanner
   | /\.pre-commit-cache
+  | /\.pre-commit-cache-run-1
   | /\.pytest_cache
   | /__pycache__
   | /\.venv

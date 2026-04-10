@@ -49,6 +49,25 @@ class TaskImportPayload(BaseModel):
     csv_text: str = Field(min_length=1)
 
 
+class PomodoroSessionPayload(BaseModel):
+    session_type: str
+    duration_minutes: int = Field(gt=0, le=480)
+    completed: bool = True
+    session_date: str = ""
+    note: str = Field(default="", max_length=120)
+
+
+class WorkstationCheckinPayload(BaseModel):
+    period: str
+    checkin_date: str = ""
+
+
+class PhoneFocusPayload(BaseModel):
+    duration_minutes: int = Field(gt=0, le=1440)
+    note: str = Field(default="", max_length=120)
+    resisted_at: str = ""
+
+
 def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
     setup_logging()
     app = FastAPI(title="Self Manager API", version="3.0")
@@ -247,6 +266,110 @@ def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True, **result}
+
+    @app.post("/api/pomodoro/sessions")
+    def create_pomodoro_session(payload: PomodoroSessionPayload, user: dict = Depends(require_user)) -> dict:
+        try:
+            item = service.record_pomodoro_session(
+                int(user["id"]),
+                session_type=payload.session_type,
+                duration_minutes=payload.duration_minutes,
+                completed=payload.completed,
+                session_date=payload.session_date or None,
+                note=payload.note,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "item": item}
+
+    @app.get("/api/pomodoro/sessions")
+    def list_pomodoro_sessions(
+        start_date: str = "",
+        end_date: str = "",
+        session_type: str = "",
+        completed: Optional[bool] = None,
+        days: int = 7,
+        user: dict = Depends(require_user),
+    ) -> dict:
+        try:
+            items = service.list_pomodoro_sessions(
+                int(user["id"]),
+                start_date=start_date or None,
+                end_date=end_date or None,
+                session_type=session_type or None,
+                completed=completed,
+                days=days,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "items": items}
+
+    @app.get("/api/pomodoro/stats")
+    def pomodoro_stats(
+        start_date: str = "",
+        end_date: str = "",
+        days: int = 7,
+        user: dict = Depends(require_user),
+    ) -> dict:
+        try:
+            stats = service.get_pomodoro_stats(
+                int(user["id"]),
+                start_date=start_date or None,
+                end_date=end_date or None,
+                days=days,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **stats}
+
+    @app.get("/api/habits/dashboard")
+    def habit_dashboard(today: str = "", user: dict = Depends(require_user)) -> dict:
+        try:
+            data = service.get_habit_dashboard(int(user["id"]), today=today or None)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **data}
+
+    @app.get("/api/habits/checkins")
+    def list_habit_checkins(days: int = 14, end_date: str = "", user: dict = Depends(require_user)) -> dict:
+        try:
+            items = service.list_workstation_checkins(int(user["id"]), days=days, end_date=end_date or None)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "items": items}
+
+    @app.post("/api/habits/checkins")
+    def create_habit_checkin(payload: WorkstationCheckinPayload, user: dict = Depends(require_user)) -> dict:
+        try:
+            item = service.record_workstation_checkin(
+                int(user["id"]),
+                period=payload.period,
+                checkin_date=payload.checkin_date or None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "item": item}
+
+    @app.get("/api/habits/phone-focus")
+    def list_phone_focus(days: int = 14, end_date: str = "", user: dict = Depends(require_user)) -> dict:
+        try:
+            items = service.list_phone_focus_records(int(user["id"]), days=days, end_date=end_date or None)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "items": items}
+
+    @app.post("/api/habits/phone-focus")
+    def create_phone_focus(payload: PhoneFocusPayload, user: dict = Depends(require_user)) -> dict:
+        try:
+            item = service.record_phone_focus(
+                int(user["id"]),
+                duration_minutes=payload.duration_minutes,
+                note=payload.note,
+                resisted_at=payload.resisted_at or None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "item": item}
 
     @app.get("/api/schedule/overview")
     def schedule_overview(user: dict = Depends(require_user)) -> dict:

@@ -1,26 +1,31 @@
-version: '1.0'
+version: "1.0"
 name: branch-quality-template
-displayName: 分支质量模板
+displayName: 分支模板质量门禁
+
 stages:
   - stage:
-    name: quality_gate
-    displayName: 质量校验
-    steps:
-      - step: build@python
-        name: branch_quality_check
-        displayName: 分支质量检查
-        pythonVersion: '3.11'
-        commands:
-          - python3 -m pip install --upgrade pip
-          - pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-          - pip3 install -r requirements-dev.txt
-          - python3 -m flake8 --config=.flake8 .
-          - python3 -m black --check . --config black.toml
-          - python3 -m pytest tests -q
+      name: quality_gate
+      displayName: 分支检查
+      steps:
+        - step: build@python
+          name: branch_quality_check
+          displayName: Python 3.11 分支质量检查
+          pythonVersion: "3.11"
+          commands:
+            - python3 -m pip install --upgrade pip
+            - pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+            - pip3 install -r requirements-dev.txt
+            - python3 -m flake8 --config=.flake8 .
+            - python3 -m black --check . --config black.toml
+            - python3 -m pytest tests -q
+
 triggers:
   push:
     branches:
+      include:
+        - feature/*
+        - bugfix/*
+        - hotfix/*
+        - release/*
       exclude:
         - main
-      include:
-        - .*

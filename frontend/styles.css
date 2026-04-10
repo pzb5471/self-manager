@@ -596,6 +596,155 @@ textarea { min-height: 100px; resize: vertical; }
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.8), 0 0 0 1px rgba(15, 23, 42, 0.08);
 }
 
+.habit-checkins {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.habit-checkin-btn {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+}
+.habit-checkin-btn strong {
+  font-size: 18px;
+}
+.habit-checkin-btn.is-done {
+  border-color: #9ed7c8;
+  background: #edf9f4;
+  color: #0f766e;
+  cursor: default;
+}
+.habit-row {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  background: #fff;
+}
+.habit-list {
+  display: grid;
+  gap: 10px;
+}
+.achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.achievement-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  background: #fff;
+}
+.achievement-card.is-unlocked {
+  border-color: #c9a227;
+  background: linear-gradient(180deg, #fff9e7, #fffdf6);
+}
+.achievement-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.pomodoro-layout {
+  display: grid;
+  gap: 18px;
+  justify-items: center;
+}
+.pomodoro-ring {
+  --progress: 0;
+  width: min(360px, 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  padding: 16px;
+  background:
+    radial-gradient(circle at center, #fffdf8 56%, transparent 57%),
+    conic-gradient(from 180deg, #0f766e 0 calc(var(--progress) * 1%), #e5e7eb 0);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05), 0 18px 40px rgba(15, 23, 42, 0.12);
+}
+.pomodoro-ring.work {
+  background:
+    radial-gradient(circle at center, #fffdf8 56%, transparent 57%),
+    conic-gradient(from 180deg, #0f766e 0 calc(var(--progress) * 1%), #d7e9e6 0);
+}
+.pomodoro-ring.rest {
+  background:
+    radial-gradient(circle at center, #fffdf8 56%, transparent 57%),
+    conic-gradient(from 180deg, #3b82f6 0 calc(var(--progress) * 1%), #dbe7fb 0);
+}
+.pomodoro-ring.long {
+  background:
+    radial-gradient(circle at center, #fffdf8 56%, transparent 57%),
+    conic-gradient(from 180deg, #7c3aed 0 calc(var(--progress) * 1%), #e5d9fa 0);
+}
+.pomodoro-ring-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 28px;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.96)),
+    linear-gradient(180deg, #fffdf8, #f8fafc);
+  border: 1px solid rgba(221, 226, 234, 0.9);
+}
+.pomodoro-mode {
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.pomodoro-time {
+  font-size: clamp(52px, 11vw, 86px);
+  line-height: 1;
+  letter-spacing: 0.03em;
+}
+.pomodoro-meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+.pomodoro-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.pomodoro-summary {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.pomodoro-stat {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+  text-align: center;
+}
+.pomodoro-stat span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pomodoro-stat strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 22px;
+}
+
 .toast {
   position: fixed;
   right: 18px;
@@ -658,6 +807,8 @@ textarea { min-height: 100px; resize: vertical; }
   .app-shell { grid-template-columns: 1fr; }
   .metrics { grid-template-columns: 1fr 1fr; }
   .grid-2, .filters, .editor-grid, .workspace-topbar, .filters-grid { grid-template-columns: 1fr; }
+  .habit-checkins, .achievement-grid { grid-template-columns: 1fr; }
+  .pomodoro-summary { grid-template-columns: 1fr; }
   .calendar-grid { grid-template-columns: 1fr; }
   .hero-card { flex-direction: column; }
 }
