@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -418,6 +418,18 @@ def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
             "stats": stats,
             "trend": trend,
         }
+
+    @app.get("/api/reports/weekly")
+    def weekly_report(
+        end_date: str = "",
+        days: int = Query(default=7, ge=1, le=31),
+        user: dict = Depends(require_user),
+    ) -> dict:
+        try:
+            report = service.get_weekly_report(int(user["id"]), end_date=end_date or None, days=days)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "report": report}
 
     return app
 

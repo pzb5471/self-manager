@@ -19,6 +19,12 @@ const state = {
   tasks: [],
   dashboard: null,
   habitDashboard: null,
+  weeklyReport: {
+    endDate: "",
+    report: null,
+    loading: false,
+    error: "",
+  },
   pomodoro: {
     mode: "work",
     running: false,
@@ -60,6 +66,7 @@ const el = {
   pageHabits: document.getElementById("page-habits"),
   pageCategories: document.getElementById("page-categories"),
   pageStats: document.getElementById("page-stats"),
+  pageWeeklyReport: document.getElementById("page-weekly-report"),
   modalRoot: document.getElementById("modal-root"),
 };
 
@@ -84,6 +91,11 @@ function recurrenceText(rule) {
 
 function quadrantText(quadrant) {
   return quadrantLabels[quadrant] || `Q${quadrant}`;
+}
+
+function localDateInputValue(date = new Date()) {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
 function formatDateTime(value) {
@@ -893,6 +905,231 @@ async function renderStats() {
   });
 }
 
+function renderMiniTrendSVG(points, valueKey, stroke = "#0f766e") {
+  const safePoints = Array.isArray(points) && points.length ? points : [{ date: localDateInputValue(), [valueKey]: 0 }];
+  const width = 860;
+  const height = 180;
+  const maxY = Math.max(1, ...safePoints.map((item) => Number(item[valueKey] || 0)));
+  const step = safePoints.length > 1 ? width / (safePoints.length - 1) : width;
+  const d = safePoints.map((item, index) => {
+    const x = index * step;
+    const y = height - ((Number(item[valueKey] || 0) / maxY) * (height - 28)) - 14;
+    return `${index === 0 ? "M" : "L"}${x},${y}`;
+  }).join(" ");
+  return `
+    <svg viewBox="0 0 ${width} ${height}" width="100%" height="100%">
+      <path d="${d}" fill="none" stroke="${stroke}" stroke-width="3" />
+      ${safePoints.map((item, index) => {
+        const x = index * step;
+        const y = height - ((Number(item[valueKey] || 0) / maxY) * (height - 28)) - 14;
+        return `<circle cx="${x}" cy="${y}" r="4" fill="${stroke}"><title>${item.date}: ${item[valueKey]}</title></circle>`;
+      }).join("")}
+    </svg>`;
+}
+
+function weeklyMetric(label, value) {
+  return `<div class="metric"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`;
+}
+
+function weeklyBars(entries, total, formatter = (key) => key) {
+  if (!entries.length) return '<div class="empty-state">本周暂无对应统计数据。</div>';
+  return entries.map(([key, count]) => `
+    <div class="bar-item">
+      <div class="meta"><span>${escapeHtml(formatter(key))}</span><span>${count}</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(Number(count) / Math.max(1, total)) * 100}%"></div></div>
+    </div>
+  `).join("");
+}
+
+async function loadWeeklyReport(options = {}) {
+  if (!state.weeklyReport.endDate) state.weeklyReport.endDate = localDateInputValue();
+  if (!options.silent) {
+    state.weeklyReport.loading = true;
+    state.weeklyReport.error = "";
+  }
+  try {
+    const params = new URLSearchParams({
+      end_date: state.weeklyReport.endDate,
+      days: "7",
+    });
+    const result = await api(`/api/reports/weekly?${params.toString()}`);
+    state.weeklyReport.report = result.report;
+    state.weeklyReport.error = "";
+  } catch (error) {
+    state.weeklyReport.report = null;
+    state.weeklyReport.error = error.message || "周报加载失败";
+  } finally {
+    state.weeklyReport.loading = false;
+  }
+}
+
+async function renderWeeklyReport() {
+  if (!state.weeklyReport.endDate) state.weeklyReport.endDate = localDateInputValue();
+  if (!state.weeklyReport.report && !state.weeklyReport.loading && !state.weeklyReport.error) {
+    await loadWeeklyReport();
+  }
+
+  if (state.weeklyReport.loading) {
+    el.pageWeeklyReport.innerHTML = `
+      <section class="hero-card">
+        <div>
+          <p class="eyebrow">Weekly Report</p>
+          <h1>个人统计周报</h1>
+          <p class="hero-copy">正在汇总本周的任务、专注与习惯数据，请稍候。</p>
+        </div>
+      </section>
+      <div class="empty-state" style="margin-top:16px;">周报加载中...</div>
+    `;
+    return;
+  }
+
+  if (state.weeklyReport.error) {
+    el.pageWeeklyReport.innerHTML = `
+      <section class="hero-card">
+        <div>
+          <p class="eyebrow">Weekly Report</p>
+          <h1>个人统计周报</h1>
+          <p class="hero-copy">接口返回失败时，这里会保留日期筛选入口，方便重新加载。</p>
+        </div>
+      </section>
+      <section class="panel" style="margin-top:16px;">
+        <div class="weekly-toolbar">
+          <label>统计截止日期
+            <input id="weekly-end-date" type="date" value="${escapeHtml(state.weeklyReport.endDate)}" />
+          </label>
+          <button class="btn primary" id="weekly-reload-btn">重新加载</button>
+        </div>
+        <div class="empty-state" style="margin-top:16px;">${escapeHtml(state.weeklyReport.error)}</div>
+      </section>
+    `;
+    document.getElementById("weekly-reload-btn").addEventListener("click", async () => {
+      state.weeklyReport.endDate = document.getElementById("weekly-end-date").value || localDateInputValue();
+      await loadWeeklyReport();
+      await renderWeeklyReport();
+    });
+    return;
+  }
+
+  const report = state.weeklyReport.report || {};
+  const summary = report.summary || {};
+  const taskStats = report.tasks || {};
+  const pomodoro = report.pomodoro || {};
+  const habits = report.habits || {};
+  const insights = report.insights || {};
+  const range = report.range || { label: "" };
+  const taskTotal = Math.max(1, Number(taskStats.created || 0));
+  const taskByQuadrant = Object.entries(taskStats.by_quadrant || {});
+  const taskByCategory = Object.entries(taskStats.by_category || {});
+  const topTitles = Array.isArray(taskStats.top_completed_titles) ? taskStats.top_completed_titles : [];
+
+  el.pageWeeklyReport.innerHTML = `
+    <section class="hero-card">
+      <div>
+        <p class="eyebrow">Weekly Report</p>
+        <h1>个人统计周报</h1>
+        <p class="hero-copy">用一页看清最近 7 天的任务推进、专注投入和习惯执行情况。</p>
+      </div>
+      <div class="hero-metrics">
+        <div><span>统计区间</span><strong>${escapeHtml(range.label || "--")}</strong></div>
+        <div><span>任务完成率</span><strong>${summary.completion_rate || 0}%</strong></div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+      <div class="weekly-toolbar">
+        <label>统计截止日期
+          <input id="weekly-end-date" type="date" value="${escapeHtml(state.weeklyReport.endDate)}" />
+        </label>
+        <button class="btn primary" id="weekly-apply-btn">刷新周报</button>
+      </div>
+    </section>
+
+    <div class="metrics" style="margin-top:16px;">
+      ${weeklyMetric("创建任务", summary.tasks_created || 0)}
+      ${weeklyMetric("完成任务", summary.tasks_completed || 0)}
+      ${weeklyMetric("专注分钟", summary.focus_minutes || 0)}
+      ${weeklyMetric("打卡天数", summary.checkin_days || 0)}
+    </div>
+
+    <div class="grid-2">
+      <section class="panel">
+        <h3>任务统计</h3>
+        <div class="task-badges">
+          <span class="plain-badge">创建 ${taskStats.created || 0}</span>
+          <span class="plain-badge">完成 ${taskStats.completed || 0}</span>
+          <span class="plain-badge">完成率 ${taskStats.completion_rate || 0}%</span>
+        </div>
+        <div class="grid-2 weekly-split">
+          <div>
+            <h4>四象限分布</h4>
+            ${weeklyBars(taskByQuadrant, taskTotal, (key) => quadrantText(Number(key)))}
+          </div>
+          <div>
+            <h4>分类分布</h4>
+            ${weeklyBars(taskByCategory, taskTotal)}
+          </div>
+        </div>
+        <div class="weekly-top-list">
+          <h4>本周已完成任务</h4>
+          ${topTitles.length ? topTitles.map((title) => `<div class="weekly-list-row">${escapeHtml(title)}</div>`).join("") : '<div class="empty-state">本周还没有已完成任务。</div>'}
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>番茄与习惯</h3>
+        <div class="metrics weekly-inner-metrics">
+          ${weeklyMetric("专注次数", pomodoro.focus_sessions || 0)}
+          ${weeklyMetric("已完成番茄", pomodoro.completed_sessions || 0)}
+          ${weeklyMetric("全勤天数", habits.full_checkin_days || 0)}
+          ${weeklyMetric("控机分钟", habits.phone_focus_minutes || 0)}
+        </div>
+        <div class="weekly-trend-stack">
+          <div>
+            <h4>每日专注分钟</h4>
+            <div class="trend-chart weekly-chart">${renderMiniTrendSVG(pomodoro.by_date || [], "focus_minutes", "#0f766e")}</div>
+          </div>
+          <div>
+            <h4>每日打卡段数</h4>
+            <div class="trend-chart weekly-chart">${renderMiniTrendSVG(habits.checkins_by_date || [], "period_count", "#c2410c")}</div>
+          </div>
+          <div>
+            <h4>每日控机分钟</h4>
+            <div class="trend-chart weekly-chart">${renderMiniTrendSVG(habits.phone_focus_by_date || [], "minutes", "#2563eb")}</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel" style="margin-top:16px;">
+      <h3>周报洞察</h3>
+      <div class="weekly-insights">
+        <article class="weekly-insight-card">
+          <strong>本周亮点</strong>
+          <p>${escapeHtml(insights.highlight || "暂无亮点总结")}</p>
+        </article>
+        <article class="weekly-insight-card">
+          <strong>专注反馈</strong>
+          <p>${escapeHtml(insights.focus || "暂无专注反馈")}</p>
+        </article>
+        <article class="weekly-insight-card">
+          <strong>习惯反馈</strong>
+          <p>${escapeHtml(insights.habit || "暂无习惯反馈")}</p>
+        </article>
+        <article class="weekly-insight-card">
+          <strong>改进建议</strong>
+          <p>${escapeHtml(insights.improvement || "暂无改进建议")}</p>
+        </article>
+      </div>
+    </section>
+  `;
+
+  document.getElementById("weekly-apply-btn").addEventListener("click", async () => {
+    state.weeklyReport.endDate = document.getElementById("weekly-end-date").value || localDateInputValue();
+    await loadWeeklyReport();
+    await renderWeeklyReport();
+  });
+}
+
 async function renderHabits() {
   const dashboard = await api("/api/habits/dashboard");
   state.habitDashboard = dashboard;
@@ -1208,7 +1445,8 @@ async function rerenderCurrentPage() {
   else if (state.page === "pomodoro") await renderPomodoro();
   else if (state.page === "habits") await renderHabits();
   else if (state.page === "categories") await renderCategories();
-  else await renderStats();
+  else if (state.page === "stats") await renderStats();
+  else await renderWeeklyReport();
 }
 
 async function showPage(page) {
@@ -1219,11 +1457,13 @@ async function showPage(page) {
   el.pageHabits.classList.toggle("hidden", page !== "habits");
   el.pageCategories.classList.toggle("hidden", page !== "categories");
   el.pageStats.classList.toggle("hidden", page !== "stats");
+  el.pageWeeklyReport.classList.toggle("hidden", page !== "weekly-report");
   if (page === "home") await renderHome();
   else if (page === "pomodoro") await renderPomodoro();
   else if (page === "habits") await renderHabits();
   else if (page === "categories") await renderCategories();
-  else await renderStats();
+  else if (page === "stats") await renderStats();
+  else await renderWeeklyReport();
 }
 
 async function bootstrapApp() {
