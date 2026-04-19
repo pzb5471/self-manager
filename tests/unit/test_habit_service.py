@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
 from service import TaskService
+import service as service_module
 
 
 pytestmark = pytest.mark.unit
@@ -37,6 +39,24 @@ def test_workstation_checkins_are_recorded_and_deduplicated(habit_service):
 
     with pytest.raises(ValueError):
         service.record_workstation_checkin(user_id, "morning", "2026-04-09")
+
+
+def test_workstation_checkin_defaults_to_local_time(habit_service, monkeypatch):
+    service, user_id = habit_service
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            local_tz = timezone(timedelta(hours=8))
+            current = cls(2026, 4, 14, 0, 30, 15, tzinfo=local_tz)
+            return current if tz is None else current.astimezone(tz)
+
+    monkeypatch.setattr(service_module, "datetime", FrozenDateTime)
+
+    record = service.record_workstation_checkin(user_id, "morning")
+
+    assert record["checkin_date"] == "2026-04-14"
+    assert record["created_at"] == "2026-04-14 00:30:15"
 
 
 def test_phone_focus_records_and_user_isolation(habit_service):
@@ -82,4 +102,3 @@ def test_habit_dashboard_computes_achievements_and_streak(habit_service):
     assert achievements["steady_worker"]["unlocked"] is True
     assert achievements["phone_hour"]["unlocked"] is True
     assert achievements["discipline_master"]["unlocked"] is True
-

@@ -56,7 +56,7 @@ def test_crud_lifecycle_with_status_toggle(service_with_users):
         quadrant=1,
         completed=True,
     )
-    assert updated is True
+    assert updated is not None
 
     after_update = service.get_task_by_id(created["id"], user_a_id)
     assert after_update is not None
@@ -100,7 +100,7 @@ def test_completed_status_queries_are_isolated(service_with_users):
     task_a = service.add_task(user_a_id, "Alpha", "", "工作", 1)
     task_b = service.add_task(user_b_id, "Beta", "", "生活", 3)
 
-    assert service.set_task_completed(task_a["id"], user_a_id, True) is True
+    assert service.set_task_completed(task_a["id"], user_a_id, True) is not None
 
     completed_a = service.get_all_tasks(user_a_id, status="completed")
     pending_a = service.get_all_tasks(user_a_id, status="pending")

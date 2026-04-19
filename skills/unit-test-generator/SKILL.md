@@ -1,4 +1,4 @@
-﻿---
+---
 name: "unit-test-generator"
 description: "根据选中的函数或类，自动生成完整、可运行的单元测试用例，覆盖正常、边界和异常情况。"
 ---

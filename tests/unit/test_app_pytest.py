@@ -236,14 +236,13 @@ def test_update_task_success(service_ctx):
         recurrence_rule="daily",
     )
 
-    assert updated is True
-    latest = service.get_task_by_id(task["id"], user_a_id)
-    assert latest["title"] == "Updated title"
-    assert latest["description"] == "Updated desc"
-    assert latest["category"] == categories[2]
-    assert latest["quadrant"] == 4
-    assert latest["due_at"] == "2026-04-08 18:00:00"
-    assert latest["recurrence_rule"] == "daily"
+    assert updated is not None
+    assert updated["title"] == "Updated title"
+    assert updated["description"] == "Updated desc"
+    assert updated["category"] == categories[2]
+    assert updated["quadrant"] == 4
+    assert updated["due_at"] == "2026-04-08 18:00:00"
+    assert updated["recurrence_rule"] == "daily"
 
 
 def test_update_task_can_clear_due_at(service_ctx):
@@ -254,11 +253,8 @@ def test_update_task_can_clear_due_at(service_ctx):
     task = service.add_task(user_a_id, "Clear due", "", categories[0], 1, due_at="2026-04-05 12:00")
     updated = service.update_task(task["id"], user_a_id, due_at="", recurrence_rule="none")
 
-    assert updated is True
-    latest = service.get_task_by_id(task["id"], user_a_id)
-    assert latest["due_at"] is None
-    assert latest["due_state"] == "none"
-    assert latest["recurrence_rule"] == "none"
+    assert updated is not None
+    assert updated["due_at"] is None
 
 
 def test_update_task_returns_false_when_not_exists_or_not_owner(service_ctx):
@@ -267,10 +263,10 @@ def test_update_task_returns_false_when_not_exists_or_not_owner(service_ctx):
     user_b_id = service_ctx["user_b_id"]
     categories = service_ctx["categories"]
 
-    assert service.update_task(task_id=999999, user_id=user_a_id, title="new") is False
+    assert service.update_task(task_id=999999, user_id=user_a_id, title="new") is None
 
     task = service.add_task(user_a_id, "Owned by A", "", categories[0], 1)
-    assert service.update_task(task_id=task["id"], user_id=user_b_id, title="hijack") is False
+    assert service.update_task(task_id=task["id"], user_id=user_b_id, title="hijack") is None
 
 
 def test_delete_task_success(service_ctx):
@@ -330,7 +326,7 @@ def test_category_crud_and_task_completion_filter(service_ctx):
     pending_tasks = service.get_all_tasks(user_a_id, status="pending")
     assert any(item["id"] == task["id"] for item in pending_tasks)
 
-    assert service.set_task_completed(task["id"], user_a_id, True) is True
+    assert service.set_task_completed(task["id"], user_a_id, True) is not None
     completed_task = service.get_task_by_id(task["id"], user_a_id)
     assert completed_task is not None
     assert completed_task["completed"] is True

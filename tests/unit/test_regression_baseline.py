@@ -64,8 +64,8 @@ def test_update_task(baseline_service_ctx):
         recurrence_rule="weekly",
     )
 
+    assert updated is not None
     latest = service.get_task_by_id(task["id"], user_id)
-    assert updated is True
     assert latest is not None
     assert latest["title"] == "After update"
     assert latest["category"] == categories[1]
