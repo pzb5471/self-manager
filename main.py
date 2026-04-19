@@ -19,11 +19,12 @@ from api.routes.stats import register_stats_routes
 from api.routes.tasks import register_task_routes
 from logger_config import setup_logging
 from service import TaskService
+from version import __version__
 
 
 def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
     setup_logging()
-    app = FastAPI(title="Self Manager API", version="3.0")
+    app = FastAPI(title="Self Manager API", version=__version__)
 
     @app.exception_handler(ValueError)
     async def value_error_handler(request, exc):
@@ -39,6 +40,10 @@ def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(frontend_dir / "index.html")
+
+    @app.get("/api/version")
+    def get_version() -> dict:
+        return {"version": __version__}
 
     register_auth_routes(app, service, require_user)
     register_category_routes(app, service, require_user)
