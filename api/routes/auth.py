@@ -13,7 +13,10 @@ def register_auth_routes(app: FastAPI, service: TaskService, require_user: Calla
     @app.post("/api/auth/register")
     def register(payload: RegisterPayload) -> dict:
         user = service.register_user(payload.username, payload.password)
-        return {"ok": True, "user": user}
+        login_result = service.login_user(payload.username, payload.password, remember_me=True)
+        if login_result is None:
+            raise HTTPException(status_code=500, detail="注册成功，但自动登录失败")
+        return {"ok": True, "user": user, **login_result}
 
     @app.post("/api/auth/login")
     def login(payload: LoginPayload) -> dict:

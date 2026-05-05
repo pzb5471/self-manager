@@ -1521,15 +1521,17 @@ function wireAuthForms() {
       return;
     }
     try {
-      await api("/api/auth/register", {
+      const result = await api("/api/auth/register", {
         method: "POST",
         body: JSON.stringify({
           username: document.getElementById("reg-username").value,
           password,
         }),
       });
-      showToast("注册成功，请登录");
-      tabLogin.click();
+      showToast("注册成功");
+      state.token = result.token;
+      localStorage.setItem("sm_token", state.token);
+      await bootstrapApp();
     } catch (error) {
       showToast(error.message);
     }
