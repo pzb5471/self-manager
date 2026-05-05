@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -20,6 +21,13 @@ from api.routes.tasks import register_task_routes
 from logger_config import setup_logging
 from service import TaskService
 from version import __version__
+
+
+DEFAULT_DB_PATH = (
+    str(Path(tempfile.gettempdir()) / "productivity_manager.db")
+    if os.getenv("VERCEL")
+    else "productivity_manager.db"
+)
 
 
 def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
@@ -57,4 +65,4 @@ def create_app(db_path: str = "productivity_manager.db") -> FastAPI:
     return app
 
 
-app = create_app(db_path=os.getenv("SELF_MANAGER_DB_PATH", "productivity_manager.db"))
+app = create_app(db_path=os.getenv("SELF_MANAGER_DB_PATH", DEFAULT_DB_PATH))

@@ -1,31 +1,11 @@
-"""Deprecated Streamlit entrypoint shim.
+"""Vercel-compatible FastAPI entrypoint.
 
-This file is kept only to provide a clear migration path for anyone still
-trying to launch the historical Streamlit UI.
+Vercel's Python runtime auto-detects root-level files named ``app.py``. Keep
+this module as a thin shim so the detected app is the real FastAPI app.
 """
 
 from __future__ import annotations
 
-DEPRECATION_MESSAGE = """
-The legacy Streamlit entry has been retired.
+from main import app, create_app
 
-Please start Self Manager with the FastAPI application instead:
-
-    python -m uvicorn main:app --reload
-""".strip()
-
-
-def main() -> None:
-    try:
-        import streamlit as st  # type: ignore
-    except ImportError:
-        print(DEPRECATION_MESSAGE)
-        return
-
-    st.set_page_config(page_title="Self Manager Entry Retired", page_icon="⚠️", layout="centered")
-    st.warning("历史 Streamlit 入口已废弃。")
-    st.code("python -m uvicorn main:app --reload", language="powershell")
-    st.info("当前主开发链路是 FastAPI + frontend/。")
-
-
-main()
+__all__ = ["app", "create_app"]
